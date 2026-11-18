@@ -221,3 +221,35 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ============================================================
+# 이 프로젝트 추가분 (How_To_Become_Warren_Buffett)
+# ============================================================
+# 🔴 비밀값 — 키 · 시크릿 · 웹훅 · 계좌. 템플릿의 `.env` 한 줄은 `.env.local` 같은 변형을 못 막는다.
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+secrets.*
+*_secret*
+*token*.json
+.toss_token*
+
+# 실행 결과 — 뉴스 원문 · 체결 · 손익 기록은 저장소에 올리지 않는다 (RTPR 약관 · 개인 계좌 정보)
+data/
+logs/
+*.sqlite
+*.sqlite3
+*.db
+*.jsonl
+
+# KNIME — 워크플로우는 knime/*.knwf 로 내보내 커밋한다. 워크스페이스 · 실행 데이터는 올리지 않는다
+knime/workspace/
+.metadata/
+*.knime.lock
+
+# macOS · 편집기
+.DS_Store
+.vscode/
+.idea/

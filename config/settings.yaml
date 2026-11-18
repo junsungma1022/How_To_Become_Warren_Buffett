@@ -1,0 +1,77 @@
+# How_To_Become_Warren_Buffett — 매매 설정 (비밀값 아님 · 저장소에 올라간다)
+# 숫자를 바꾸면 docs/DECISIONS.md 에 이유를 한 줄 남긴다.
+
+mode:
+  # shadow: 모든 단계를 실제처럼 돌리되 주문만 보내지 않는다 (기록 · 알림은 남긴다)
+  # live  : 실제 주문. run_live.py 는 --mode live 와 아래 live_enabled: true 가 **둘 다** 있어야 주문한다
+  live_enabled: false
+
+capital:
+  budget_usd: 100.0            # 이 프로그램이 쓸 최대 금액. 토스 USD 매수가능금액과 둘 중 작은 값
+  # 토스 Open API 주문은 자동 환전하지 않는다 (FAQ) → 미리 앱에서 달러로 바꿔 둔다
+
+universe:                      # 종목 범위 (사용자 결정 2026-11-18: 이전 U1 의 시가총액 기준만 · 거래량 조건 뺌)
+  min_market_cap_usd: 5_000_000
+  max_market_cap_usd: 300_000_000
+  markets: [NASDAQ, NYSE, AMEX]
+  security_types: [STOCK, FOREIGN_STOCK, DEPOSITARY_RECEIPT]
+  common_share_only: true
+
+news:
+  max_alert_age_s: 120         # 발행 뒤 이보다 늦게 받은 알림은 매수 판단을 하지 않는다 (재시작 직후 옛 기사 방지)
+  body_max_chars: 6000         # AI 에 넣는 본문 길이 상한
+
+jev:                           # 1단계: 최소 컷 (쓰레기만 거른다)
+  model: typesafe/jev-1.13     # OpenRouter 문서에서 확인된 고정 버전 (2026-11-18)
+  pass_choices: [small_positive, big_positive]   # 이 둘이면 confidence 와 상관없이 Claude 로 보낸다
+
+claude:                        # 2단계: 메인 판단 + 매수 근거 리포트
+  model: anthropic/claude-opus-5.5
+  reasoning_effort: low        # 속도 우선 (뉴스 매매는 초 단위)
+  max_tokens: 1800
+  timeout_s: 60
+
+entry:                         # 분할매수 (2회)
+  first_fraction: 0.5          # 1차: 예산의 50%
+  second_trigger_pct: 3.0      # 2차: 1차 평균가 대비 +3% 를 넘으면 (오를 때만 추가 · 물타기 없음)
+  second_window_min: 10        # 1차 체결 뒤 이 시간 안에서만 2차
+  limit_slippage_pct: 1.0      # 지정가 = 매도1호가 × (1 + 1%)
+  fill_timeout_s: 20           # 이 시간 안에 안 채워진 매수 잔량은 취소
+
+exit:                          # 분할매도
+  stop_loss_pct: -5.0          # 평균가 대비 -5% → 전량
+  tp1_pct: 10.0                # +10% → 보유량의 50%
+  tp1_fraction: 0.5
+  tp2_pct: 20.0                # 남은 물량: +20% → 전량
+  trail_pct: 5.0               # 남은 물량: 1차 익절 뒤 최고가 대비 -5% → 전량
+  max_hold_min: 30             # 첫 체결 뒤 30분 → 전량
+  session_close_buffer_min: 5  # 애프터마켓 끝나기 5분 전 → 전량
+  limit_slippage_pct: 2.0      # 매도 지정가 = 매수1호가 × (1 - 2%) (장외는 지정가만 → 체결 우선)
+  fill_timeout_s: 10           # 매도 미체결이면 가격을 고쳐 다시 (최대 reprice_max 번)
+  reprice_max: 5
+  poll_interval_s: 1.0         # 보유 중 가격 확인 주기 (토스 MARKET_DATA 한도 초당 15)
+
+risk:
+  max_positions: 1             # 동시에 한 종목만
+  daily_loss_limit_usd: 15.0   # 그날 실현 손실이 이만큼이면 신규 매수 중단
+  equity_floor_usd: 60.0       # 계좌(현금+평가) 가 이 아래면 시스템 정지
+  max_trades_per_day: 6
+  ticker_cooldown_min: 60      # 같은 종목은 청산 뒤 이 시간 동안 다시 사지 않는다
+
+sessions:                      # 사용자 결정: 프리마켓 · 정규장 · 애프터마켓 모두 (토스 데이마켓은 제외)
+  trade_premarket: true
+  trade_regular: true
+  trade_aftermarket: true
+  trade_daymarket: false
+
+fees:
+  # 백필 라벨 계산용 기본값. 실거래는 토스 /api/v1/commissions 응답을 쓴다
+  commission_rate_default: 0.001
+
+report:
+  daily_time_kst: "09:00"
+  tz: Asia/Seoul
+
+paths:
+  data_dir: data               # .gitignore 대상
+  log_dir: logs
