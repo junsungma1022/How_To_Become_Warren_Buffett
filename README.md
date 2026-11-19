@@ -13,7 +13,8 @@ flowchart LR
     N["📰 RTPR 실시간 보도자료"] --> U["🔎 종목 범위<br/>시총 $5M~$300M"]
     U --> J["🧮 Jev<br/>5단계 분류 · 쓰레기 컷"]
     J -- "작은/큰 호재" --> C["🧠 Claude Opus 5.5<br/>최종 판단 + 매수 근거 리포트"]
-    C -- BUY --> T["💸 토스증권<br/>분할 매수 → 분할 매도"]
+    C -- BUY --> W["⏱️ 발행 5분 안 +5%?"]
+    W -- 예 --> T["💸 토스증권<br/>3칸 중 1칸 매수 → 사다리 매도"]
     T --> D["🔔 Discord 알림 · 09:00 일일 보고서"]
     T --> K["📊 KNIME 채점 · 규칙 학습"]
 ```
@@ -27,9 +28,12 @@ flowchart LR
 
 ## 매매 규칙 (요약 · 전체는 [`config/settings.yaml`](config/settings.yaml), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md))
 
-- 분할매수: 예산 50% → 10분 안에 +3% 오르면 나머지 (물타기 없음)
-- 분할매도: −5% 손절 · +10% 절반 익절 · 나머지는 +20% 또는 최고가 대비 −5% · 30분 시간 청산 · 애프터마켓 끝 전 전량
-- 안전장치: 한 번에 한 종목 · 하루 손실 −$15 면 그날 매수 중단 · 계좌 $60 미만이면 정지
+이전에 만든 자동매매 프로그램의 매수 · 매도 규칙을 그대로 쓰고, 매수 신호만 바꿨다.
+
+- 자금 3칸: 한 종목에 자금의 1/3 만. 3칸이 다 차면 더 사지 않는다
+- 매수: Claude 가 BUY 라고 한 뒤, 뉴스 발행부터 5분 안에 발행 시점 가격 대비 +5% 이상 오르면 한 번에 매수
+- 매도: +5 · +10 · +15% 에서 30% 씩 익절 · 나머지는 고점 대비 −5% 트레일링 · 손절 −7% · 5분 뒤 +2% 미만 / 15분 뒤 +5% 미만이면 전량
+- 안전장치 (% 기준): 하루 실현손실 −10% 또는 3연패면 그날 매수 중단 · 자산이 시작 대비 −40% 면 정지
 
 ## 폴더
 
@@ -40,7 +44,7 @@ src/hbwb/
   universe.py             종목 범위 (시가총액)
   ai/jev.py · claude.py   1단계 · 2단계 AI (OpenRouter)
   broker/toss.py          토스 Open API (시세 · 계좌 · 주문)
-  strategy/rules.py       분할매수 · 분할매도 규칙 (순수 함수 · 실거래와 시뮬레이션이 같이 씀)
+  strategy/rules.py       3칸 · 매수 신호 · 사다리 매도 규칙 (순수 함수 · 실거래와 시뮬레이션이 같이 씀)
   strategy/backtest.py    1분봉 시뮬레이션 (KNIME 정답 라벨)
   engine/runner.py        전체 흐름 · 보유 관리
   report/daily.py         09:00 일일 보고서
@@ -58,7 +62,7 @@ cp .env.example .env && chmod 600 .env          # 키는 편집기로 직접 입
 brew install pre-commit gitleaks && pre-commit install
 
 .venv/bin/python -m pytest -q                   # 시험 (네트워크 안 씀)
-.venv/bin/python scripts/check_setup.py --discord   # 키 · 토스 계좌 · AI · Discord 점검 (주문 없음)
+.venv/bin/python scripts/check_setup.py --discord   # 키 · 토스 계좌 · AI · Discord 점검 (주문 없음 · 키가 없는 건 건너뜀)
 caffeinate -i .venv/bin/python scripts/run_live.py --mode shadow   # 주문 없이 전 과정
 # 실거래: settings.yaml 의 mode.live_enabled: true 로 바꾼 뒤
 caffeinate -i .venv/bin/python scripts/run_live.py --mode live
@@ -69,7 +73,7 @@ bash scripts/install_launchd.sh                 # 매일 09:00 일일 보고서
 
 ## KNIME
 
-과거 기사(2026-05 ~ 10)에 같은 AI · 같은 매매 규칙을 적용한 데이터셋을 만들어 KNIME 으로 분석한다.
+과거 기사(2026-05 ~ 10)에 같은 AI · 같은 매수 신호 · 같은 매도 규칙을 적용한 데이터셋을 만들어 KNIME 으로 분석한다.
 
 ```bash
 .venv/bin/python scripts/build_dataset.py --stage prices   # 토스 1분봉 · 일봉 · 종목정보

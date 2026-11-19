@@ -14,17 +14,19 @@
 
 ## 워크플로우 A — `A_jev_claude_scoring`: AI 분류 채점
 
-질문: **"Jev 가 호재라고 한 것 / Claude 가 BUY 라고 한 것 중 실제로 이긴 비율은?"**
+질문: **"+5% 신호가 난 기사 중, Jev 가 호재라고 한 것 / Claude 가 BUY 라고 한 것은 실제로 더 많이 이겼나?"**
+
+- 보조 질문 (Row Filter 없이): AI 가 BUY 라고 한 기사는 `triggered = yes` 비율이 더 높은가? → Bar Chart (x `claude_pred`, 집계 `triggered` 개수)
 
 ```
-File Reader ─ Row Filter(tradeable = yes) ─┬─ Bar Chart (jev_choice 별 건수)
+File Reader ─ Row Filter(triggered = yes) ─┬─ Bar Chart (jev_choice 별 건수)
                                             ├─ Color Manager(label_win) ─ Scatter Plot (x jev_expected_grade, y sim_ret_pct)
                                             ├─ Scorer ①  (label_buy  vs  jev_pred)
                                             └─ Scorer ②  (label_buy  vs  claude_pred)
 ```
 
 1. **File Reader**: `news_dataset.csv` (첫 줄 열 이름 체크)
-2. **Row Filter**: `tradeable` = `yes` (살 수 없었던 기사는 채점 대상이 아니다)
+2. **Row Filter**: `triggered` = `yes` (5분 안 +5% 신호가 나서 실제로 샀을 기사만 손익이 있다)
 3. **Bar Chart**: Category column `jev_choice`, Aggregation = Occurrence count → 5단계 분포
 4. **Color Manager**: `label_win` (WIN 초록 · LOSS 빨강) → **Scatter Plot**: X `jev_expected_grade`, Y `sim_ret_pct`
 5. **Scorer ①**: First column `label_buy`, Second column `jev_pred` → Jev 단독의 혼동행렬
@@ -34,14 +36,14 @@ File Reader ─ Row Filter(tradeable = yes) ─┬─ Bar Chart (jev_choice 별 
    Scorer ② 앞에 **Row Filter**(`claude_pred` 가 빈칸이 아닌 행)를 둔다)
 
 **정밀도 읽는 법**: 혼동행렬에서 "BUY 라고 한 것 중 WIN" 의 비율 = Precision. 이 전략의 핵심 숫자다 (산 것 중 몇 %가 돈을 벌었나).
-기준선은 `tradeable = yes` 전체의 WIN 비율 (아무거나 샀을 때). AI 가 기준선보다 높아야 의미가 있다.
+기준선은 `triggered = yes` 전체의 WIN 비율 (AI 없이 +5% 신호만으로 샀을 때). AI 가 기준선보다 높아야 의미가 있다.
 
 ## 워크플로우 B — `B_buy_rule_learning`: 매수 규칙 학습 (13주차 그대로)
 
 질문: **"AI 점수 + 기사 · 가격 정보로 이길 거래를 맞힐 수 있나? 어떤 규칙인가?"**
 
 ```
-File Reader ─ Row Filter(tradeable = yes) ─ Column Filter ─ Partitioning(70/30, seed 0)
+File Reader ─ Row Filter(triggered = yes) ─ Column Filter ─ Partitioning(70/30, seed 0)
     ├─(70%)─ Decision Tree Learner ──┐
     │        Random Forest Learner ─┤
     │        Logistic Regression Learner ─┤
@@ -51,7 +53,7 @@ File Reader ─ Row Filter(tradeable = yes) ─ Column Filter ─ Partitioning(7
 - **Column Filter** (입력으로 쓸 열만): `session`, `published_et_hour`, `log10_market_cap`, `change_vs_prev_close_pct`,
   `ret_15m_before_pct`, `volume_15m_before`, `jev_expected_grade`, `jev_confidence`, `jev_p_*` 5개, `title_len`, `label_win`
   (`label_buy` · `jev_pred` · `claude_*` 는 빼거나 비교 실험용으로만)
-  - **넣으면 안 되는 열** (미래 정보 · 정답 복사본): `sim_*`, `day_high_vs_prev_close_pct`, `label_surge30`, `label_buy`
+  - **넣으면 안 되는 열** (미래 정보 · 정답 복사본): `sim_*`, `ref_price`(넣어도 되지만 가격 수준일 뿐), `day_high_vs_prev_close_pct`, `label_surge30`, `label_buy`
 - **Partitioning**: Relative 70%, Draw randomly, Use random seed `0` (수업 설정)
 - **Decision Tree Learner**: Class column `label_win`, Quality measure Gini index, Pruning MDL, Min records per node 10
   → **View** 로 나무를 열어 맨 위 갈림 조건을 발표 자료에 쓴다 (예: "jev_expected_grade > 4.2 이고 장 시작 30분 안")
