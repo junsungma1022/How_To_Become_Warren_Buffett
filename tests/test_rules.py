@@ -122,3 +122,21 @@ def test_risk_percent_rules(cfg):
     assert r.block_reason("A", "x", 89.0, 0) == "ticker_already_traded_today"
     assert r.block_reason("A", "y", 59.0, 0).startswith("halted:drawdown")   # 시작 $100 대비 −41%
     assert r.block_reason("B", "y", 100.0, 0).startswith("halted")           # 정지는 사람이 풀 때까지
+
+
+def test_risk_rebuild_after_restart(cfg):
+    from hbwb.clock import parse_iso_ms
+    from hbwb.engine.runner import report_day_key, us_day
+    t = int(dt.datetime(2026, 11, 18, 23, 40, tzinfo=dt.timezone.utc).timestamp() * 1000)   # KST 11-19 08:40 → 하루 11-18
+    iso = lambda ms: dt.datetime.fromtimestamp(ms / 1000, dt.timezone.utc).isoformat()       # noqa: E731
+    trades = [{"ticker": "OLD", "entry_utc": iso(t - 86_400_000), "exit_utc": iso(t - 86_400_000), "pnl_usd": "-5"},
+              {"ticker": "A", "entry_utc": iso(t - 3 * MIN), "exit_utc": iso(t - 2 * MIN), "pnl_usd": "2"},
+              {"ticker": "B", "entry_utc": iso(t - 2 * MIN), "exit_utc": iso(t - MIN), "pnl_usd": "-1"},
+              {"ticker": "C", "entry_utc": iso(t - MIN), "exit_utc": iso(t), "pnl_usd": "-1.5"}]
+    r = RiskBook(cfg)
+    r.roll_day(report_day_key(t), 100.0)
+    r.rebuild(trades, report_day_key, us_day, parse_iso_ms, [("D", us_day(t))])
+    assert abs(r.realized_today - (-0.5)) < 1e-9          # 전날 거래(-5)는 빼고 오늘 것만
+    assert r.consecutive_losses == 2                      # 끝에서부터 B · C
+    assert r.block_reason("C", us_day(t), 100.0, 0) == "ticker_already_traded_today"
+    assert r.block_reason("D", us_day(t), 100.0, 0) == "ticker_already_traded_today"

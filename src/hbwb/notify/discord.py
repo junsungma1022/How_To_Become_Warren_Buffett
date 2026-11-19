@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Callable
 
@@ -20,12 +21,12 @@ LIMIT = 1900          # Discord content 2000자 한도
 
 class Discord:
     def __init__(self, secrets: Secrets, log: Callable[..., dict], http: httpx.AsyncClient | None = None,
-                 prefix: str = "HBWB", clock=time.time):
+                 prefix: str = "HBWB", clock=time.time, sleep=asyncio.sleep):
         self.urls = {ch: secrets.get("discord_" + ch, required=False) for ch in CHANNELS}
         self._secret_vals = [u for u in self.urls.values() if u]
         self.log = log
         self.http = http or httpx.AsyncClient(timeout=10.0)
-        self.prefix, self.clock = prefix, clock
+        self.prefix, self.clock, self._sleep = prefix, clock, sleep
         self._last: dict[str, float] = {}
 
     async def send(self, channel: str, text: str, key: str | None = None, min_interval_s: float = 0.0) -> bool:
@@ -45,7 +46,17 @@ class Discord:
         ok = True
         for ch in chunks:
             try:
-                r = await self.http.post(url, json={"content": ch, "allowed_mentions": {"parse": []}})
+                body = {"content": ch, "allowed_mentions": {"parse": []}}
+                r = await self.http.post(url, json=body)
+                for _ in range(3):                      # 429 (너무 자주) 면 Discord 가 알려 준 시간만큼 쉬고 다시
+                    if r.status_code != 429:
+                        break
+                    try:
+                        wait = float((r.json() or {}).get("retry_after") or 1.0)
+                    except ValueError:
+                        wait = float(r.headers.get("Retry-After") or 1.0)
+                    await self._sleep(min(wait, 10.0))
+                    r = await self.http.post(url, json=body)
                 if r.status_code >= 300:
                     ok = False
                     self.log("notify_fail", channel=channel, status=r.status_code, body=scrub(r.text[:200], self._secret_vals))

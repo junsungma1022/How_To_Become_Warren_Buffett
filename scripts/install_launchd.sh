@@ -1,41 +1,92 @@
 #!/usr/bin/env bash
-# 매일 09:00 (맥 시계 = KST) 에 daily_report.py 를 돌리는 launchd 작업을 설치한다.
-#   bash scripts/install_launchd.sh            # 설치
-#   bash scripts/install_launchd.sh --remove   # 제거
-# 맥이 09:00 에 잠들어 있으면 깨어난 직후 한 번 실행된다 (launchd StartCalendarInterval 동작).
+# 맥 launchd 로 24/7 무인 운영을 설치한다. 맥 시계 = KST 기준.
+#
+#   bash scripts/install_launchd.sh                  # 09:00 일일 보고서 + 10분마다 감시 (엔진은 손으로 켤 때)
+#   bash scripts/install_launchd.sh --engine shadow  # + 엔진 상시 실행 (주문 없음)
+#   bash scripts/install_launchd.sh --engine live    # + 엔진 상시 실행 (실제 주문 · settings.yaml live_enabled: true 필요)
+#   bash scripts/install_launchd.sh --stop-engine    # 엔진만 내린다 (보고서 · 감시는 그대로)
+#   bash scripts/install_launchd.sh --status         # 지금 상태
+#   bash scripts/install_launchd.sh --remove         # 전부 제거
+#
+# 엔진 서비스: 로그인하면 시작 · 오류로 죽으면 60초 뒤 다시 켬 · 키 · 구독 · 허용 IP 문제(종료 코드 0)는 다시 켜지 않음
+# 잠자기 방지: 엔진을 켜 두는 동안 caffeinate 를 같이 띄운다 (전원 연결 상태에서 잠들지 않게).
+#   ⚠️ 노트북 뚜껑을 닫으면 caffeinate 로도 잠든다 (외부 모니터 · 전원 연결 클램쉘 모드는 예외) → 뚜껑은 열어 둔다.
 set -euo pipefail
 
-LABEL="com.hbwb.daily-report"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 PY="${REPO}/.venv/bin/python"
-PLIST="${HOME}/Library/LaunchAgents/${LABEL}.plist"
+AGENTS="${HOME}/Library/LaunchAgents"
+UID_="$(id -u)"
+L_ENGINE="com.hbwb.engine"; L_AWAKE="com.hbwb.awake"; L_REPORT="com.hbwb.daily-report"; L_WATCH="com.hbwb.watchdog"
 
-if [[ "${1:-}" == "--remove" ]]; then
-  launchctl bootout "gui/$(id -u)/${LABEL}" 2>/dev/null || true
-  rm -f "${PLIST}"
-  echo "제거: ${PLIST}"
-  exit 0
-fi
-
-[[ -x "${PY}" ]] || { echo "가상환경이 없다: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"; exit 1; }
-mkdir -p "${HOME}/Library/LaunchAgents" "${REPO}/logs"
-
-cat > "${PLIST}" <<EOF
+plist() {  # 이름 · <dict> 안에 들어갈 나머지 XML
+  local label="$1" body="$2"
+  cat > "${AGENTS}/${label}.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>${LABEL}</string>
-  <key>ProgramArguments</key>
-  <array><string>${PY}</string><string>${REPO}/scripts/daily_report.py</string></array>
+  <key>Label</key><string>${label}</string>
   <key>WorkingDirectory</key><string>${REPO}</string>
-  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
-  <key>StandardOutPath</key><string>${REPO}/logs/daily_report.out.log</string>
-  <key>StandardErrorPath</key><string>${REPO}/logs/daily_report.err.log</string>
+  <key>StandardOutPath</key><string>${REPO}/logs/${label#com.hbwb.}.out.log</string>
+  <key>StandardErrorPath</key><string>${REPO}/logs/${label#com.hbwb.}.err.log</string>
+${body}
 </dict>
 </plist>
 EOF
+}
 
-launchctl bootout "gui/$(id -u)/${LABEL}" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" "${PLIST}"
-echo "설치: ${PLIST} (매일 09:00) · 지금 시험: launchctl kickstart gui/$(id -u)/${LABEL}"
+load()   { launchctl bootout "gui/${UID_}/$1" 2>/dev/null || true; launchctl bootstrap "gui/${UID_}" "${AGENTS}/$1.plist"; }
+unload() { launchctl bootout "gui/${UID_}/$1" 2>/dev/null || true; rm -f "${AGENTS}/$1.plist"; }
+
+status() {
+  for l in "${L_ENGINE}" "${L_AWAKE}" "${L_REPORT}" "${L_WATCH}"; do
+    if launchctl print "gui/${UID_}/${l}" >/dev/null 2>&1; then
+      st="$(launchctl print "gui/${UID_}/${l}" | awk -F'= ' '/state =/{print $2; exit}')"
+      ex="$(launchctl print "gui/${UID_}/${l}" | awk -F'= ' '/last exit code =/{print $2; exit}')"
+      echo "  ${l}: 설치됨 · 상태 ${st:-?} · 마지막 종료 코드 ${ex:-없음}"
+    else
+      echo "  ${l}: 없음"
+    fi
+  done
+  [[ -f "${REPO}/data/state/heartbeat.json" ]] && echo "  heartbeat: $(cat "${REPO}/data/state/heartbeat.json" | head -c 200)"
+  return 0
+}
+
+case "${1:-}" in
+  --remove)      for l in "${L_ENGINE}" "${L_AWAKE}" "${L_REPORT}" "${L_WATCH}"; do unload "$l"; done; echo "전부 제거"; exit 0 ;;
+  --stop-engine) unload "${L_ENGINE}"; unload "${L_AWAKE}"; echo "엔진 내림 (보고서 · 감시는 그대로)"; exit 0 ;;
+  --status)      status; exit 0 ;;
+esac
+
+[[ -x "${PY}" ]] || { echo "가상환경이 없다: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"; exit 1; }
+mkdir -p "${AGENTS}" "${REPO}/logs"
+
+plist "${L_REPORT}" "  <key>ProgramArguments</key>
+  <array><string>${PY}</string><string>${REPO}/scripts/daily_report.py</string></array>
+  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>"
+load "${L_REPORT}"
+
+plist "${L_WATCH}" "  <key>ProgramArguments</key>
+  <array><string>${PY}</string><string>${REPO}/scripts/watchdog.py</string></array>
+  <key>StartInterval</key><integer>600</integer>"
+load "${L_WATCH}"
+echo "설치: 일일 보고서 (매일 09:00) · 감시 (10분마다)"
+
+if [[ "${1:-}" == "--engine" ]]; then
+  MODE="${2:-}"
+  [[ "${MODE}" == "shadow" || "${MODE}" == "live" ]] || { echo "--engine shadow 또는 --engine live"; exit 1; }
+  plist "${L_ENGINE}" "  <key>ProgramArguments</key>
+  <array><string>${PY}</string><string>${REPO}/scripts/run_live.py</string><string>--mode</string><string>${MODE}</string><string>--quiet</string><string>--no-delay</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>ThrottleInterval</key><integer>60</integer>"
+  plist "${L_AWAKE}" "  <key>ProgramArguments</key>
+  <array><string>/usr/bin/caffeinate</string><string>-i</string><string>-s</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>"
+  load "${L_AWAKE}"
+  load "${L_ENGINE}"
+  echo "설치: 엔진 (${MODE}) 상시 실행 · 잠자기 방지"
+fi
+status

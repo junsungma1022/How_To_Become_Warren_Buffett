@@ -48,7 +48,7 @@ src/hbwb/
   strategy/backtest.py    1분봉 시뮬레이션 (KNIME 정답 라벨)
   engine/runner.py        전체 흐름 · 보유 관리
   report/daily.py         09:00 일일 보고서
-scripts/                  run_live · check_setup · daily_report · build_dataset · install_launchd
+scripts/                  run_live · check_setup · daily_report · watchdog · build_dataset · install_launchd
 knime/                    KNIME 워크플로우 (.knwf) 와 노드 설정 가이드
 tests/                    pytest (네트워크 차단 · 키 유출 검사 포함)
 docs/                     설계 · 결정 기록 · 보안 · 인수인계
@@ -63,13 +63,24 @@ brew install pre-commit gitleaks && pre-commit install
 
 .venv/bin/python -m pytest -q                   # 시험 (네트워크 안 씀)
 .venv/bin/python scripts/check_setup.py --discord   # 키 · 토스 계좌 · AI · Discord 점검 (주문 없음 · 키가 없는 건 건너뜀)
-caffeinate -i .venv/bin/python scripts/run_live.py --mode shadow   # 주문 없이 전 과정
-# 실거래: settings.yaml 의 mode.live_enabled: true 로 바꾼 뒤
-caffeinate -i .venv/bin/python scripts/run_live.py --mode live
-bash scripts/install_launchd.sh                 # 매일 09:00 일일 보고서
+.venv/bin/python scripts/run_live.py --mode shadow  # 손으로 한 번 (주문 없음 · Ctrl+C 로 끔)
 ```
 
-실거래 전 확인: 토스 앱에서 **달러로 환전** (Open API 는 자동 환전하지 않는다) · 토스 허용 IP 에 이 맥의 공인 IP 등록 · 맥이 잠들지 않게.
+### 24/7 무인 운영
+
+```bash
+bash scripts/install_launchd.sh --engine shadow   # 엔진 상시 실행(주문 없음) + 09:00 보고서 + 10분 감시 + 잠자기 방지
+# 실거래: settings.yaml 의 mode.live_enabled: true 로 바꾼 뒤
+bash scripts/install_launchd.sh --engine live
+bash scripts/install_launchd.sh --status          # 상태 · 마지막 종료 코드 · heartbeat
+bash scripts/install_launchd.sh --stop-engine     # 엔진만 내림
+.venv/bin/python scripts/daily_report.py --history   # 시작부터 날마다 결과 표
+```
+
+- 엔진이 오류로 죽으면 60초 뒤 자동으로 다시 켜지고, 재시작해도 그날 손실 한도 · 연패 · 산 종목 기록이 이어진다
+- 매일 09:00 KST: 일일 보고서 (계좌 · 하루 손익 · 누적 · 엔진 상태) 를 보내고 하루 손실 · 연패 카운터를 리셋
+- 실거래 전 확인: 토스 앱에서 **달러로 환전** (Open API 는 자동 환전하지 않는다) · 토스 허용 IP 에 이 맥의 공인 IP 등록
+- 노트북은 **뚜껑을 열고 전원에 연결**해 둔다 (뚜껑을 닫으면 잠든다)
 
 ## KNIME
 
