@@ -17,14 +17,15 @@ ARTICLE_COLS = [
     "jev_choice", "jev_grade", "jev_expected_grade", "jev_confidence",
     "jev_p_big_negative", "jev_p_small_negative", "jev_p_neutral", "jev_p_small_positive", "jev_p_big_positive",
     "jev_pass", "claude_called", "claude_decision", "claude_grade", "claude_confidence", "claude_catalyst",
-    "claude_parse_error", "action", "action_reason", "ai_cost_usd", "mode",
+    "claude_parse_error", "ref_price", "ref_source", "signal_utc", "signal_price", "signal_rise_pct",
+    "action", "action_reason", "ai_cost_usd", "mode",
 ]
 
 TRADE_COLS = [
-    "trade_id", "article_id", "ticker", "mode", "entry1_utc", "entry1_qty", "entry1_price",
-    "entry2_utc", "entry2_qty", "entry2_price", "avg_price", "bought_qty",
+    "trade_id", "article_id", "ticker", "mode", "slot", "published_utc", "ref_price",
+    "entry_utc", "entry_qty", "entry_price", "slot_usd",
     "exit_utc", "exit_reasons", "sold_qty", "avg_exit_price", "fees_usd", "pnl_usd", "ret_pct",
-    "hold_min", "peak_price", "jev_choice", "claude_grade", "claude_confidence",
+    "hold_min", "peak_price", "peak_pct", "jev_choice", "claude_grade", "claude_confidence",
 ]
 
 

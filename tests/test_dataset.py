@@ -47,11 +47,12 @@ def test_build_from_cache(tmp_path, cfg):
     stores["claude"].put(arts[0]["k"], {"decision": "BUY", "grade": 5, "conf": 0.8, "catalyst": "contract"})
 
     out = tmp_path / "out.csv"
-    assert bd.build(arts, cfg, stores, out, 0.001, 100.0) == 1
+    assert bd.build(arts, cfg, stores, out, 0.001, 100 / 3) == 1
     r = list(csv.DictReader(open(out, encoding="utf-8")))[0]
     assert list(r) == bd.COLS
     assert r["session"] == "regular" and r["jev_pred"] == "BUY" and r["claude_pred"] == "BUY"
-    assert r["tradeable"] == "yes" and r["label_win"] == "WIN" and r["label_buy"] == "BUY"
+    assert r["triggered"] == "yes" and r["label_win"] == "WIN" and r["label_buy"] == "BUY"
+    assert float(r["ref_price"]) == 2.0 and r["sim_exit_reasons"].startswith("tp")
     assert r["label_surge30"] == "YES" and float(r["market_cap_usd"]) == 20_000_000
     assert float(r["price_at_news"]) == 2.0                 # 기사 전에 끝난 봉의 종가 (미래 정보 없음)
 

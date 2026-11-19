@@ -1,4 +1,4 @@
-"""엔진 한 바퀴 (shadow): 기사 → 종목 범위 → Jev → Claude → 1차 매수 → 2차 매수 → 분할 매도 → 거래 기록."""
+"""엔진 한 바퀴 (shadow): 기사 → 종목 범위 → Jev → Claude → 5분 안 +5% 신호 → 칸 매수 → 사다리 매도 → 거래 기록."""
 
 import asyncio
 
@@ -15,17 +15,30 @@ from hbwb.universe import UniverseCheck
 
 SECRETS = {"HBWB_RTPR_KEY": "rtpr-test-key", "HBWB_OPENROUTER_KEY": "sk-or-v1-test", "HBWB_TOSS_CLIENT_ID": "cid",
            "HBWB_TOSS_CLIENT_SECRET": "sec"}
+MIN = 60_000
 
 
 class FakeToss:
-    def __init__(self):
-        self.px = 2.0
+    def __init__(self, ref=2.0):
+        self.ref, self.px = ref, {}
+        self.default = ref * 1.06          # 기본: 이미 +6% (바로 신호)
+
+    def price(self, s):
+        return self.px.get(s, self.default)
 
     async def last_prices(self, syms):
-        return {s: self.px for s in syms}
+        return {s: self.price(s) for s in syms}
 
     async def quote(self, sym):
-        return Quote(self.px * 0.999, self.px * 1.001, now_ms())
+        p = self.price(sym)
+        return Quote(p * 0.999, p * 1.001, now_ms())
+
+    async def candles(self, sym, interval="1m", count=40, before=None):
+        t = now_ms()
+        return [{"start_ms": t - 3 * MIN, "o": self.ref, "h": self.ref, "l": self.ref, "c": self.ref, "v": 1}]
+
+    async def recent_trades(self, sym, count=50):
+        return []
 
     async def aclose(self):
         pass
@@ -74,43 +87,76 @@ class FakeDiscord:
 
 
 def make_engine(tmp_path, cfg, ai=None):
+    cfg["entry"]["poll_interval_s"] = 0
     eng = Engine(cfg, load_secrets(SECRETS), "shadow")
     eng.data_dir = tmp_path
     eng.ev = EventLog(tmp_path / "logs", echo=False)
     eng.articles, eng.trades = articles(tmp_path), trades(tmp_path)
-    eng.state_path = tmp_path / "state" / "position.json"
+    eng.state_path = tmp_path / "state" / "positions.json"
     eng.toss, eng.universe, eng.rtpr, eng.ai, eng.discord = FakeToss(), FakeUniverse(), FakeRtpr(), ai or FakeAI(), FakeDiscord()
     eng.executor = ShadowExecutor(cfg, eng.ev.write, 0.001, eng.toss.quote)
     t = now_ms()
     eng.windows = [("pre", t - 3_600_000, t + 3_600_000), ("regular", t + 3_600_000, t + 7_200_000)]
+    eng.risk.roll_day("d", 100.0)
     return eng
 
 
-def alert(age_s=5):
+def alert(ticker="ABC", aid="ID1", age_s=5):
     t = now_ms()
-    return Alert("ABC", "https://rtpr.io/a/ID1", "https://rtpr.io/a/ID1?sig=x", t - age_s * 1000, t)
+    return Alert(ticker, f"https://rtpr.io/a/{aid}", f"https://rtpr.io/a/{aid}?sig=x", t - age_s * 1000, t)
 
 
-def test_full_cycle_buy_split_sell(tmp_path, cfg):
+def age(eng, sym, seconds):
+    """보유 시각을 과거로 돌린다 (시간 규칙 · 30초 유예 시험용)."""
+    p = eng.positions[sym]
+    for f in p.fills:
+        f.t_ms -= seconds * 1000
+    p.entry_ms -= seconds * 1000
+
+
+def test_full_cycle_slot_buy_and_ladder(tmp_path, cfg):
     eng = make_engine(tmp_path, cfg)
     asyncio.run(eng.handle_alert(alert()))
-    rows = eng.articles.rows()
-    assert rows[-1]["action"] == "buy" and rows[-1]["claude_decision"] == "BUY" and rows[-1]["jev_pass"] == "true"
-    assert eng.pos is not None and eng.pos.qty > 0 and eng.state_path.exists()
-    q1 = eng.pos.qty
-    assert any(ch == "entries" and "매수 근거 리포트" in t for ch, t in eng.discord.sent)
-
-    eng.toss.px = 2.0 * 1.035                     # +3.5% → 2차 매수
-    asyncio.run(eng.manage_once())
-    assert eng.pos.entry2_done and eng.pos.qty > q1
-    eng.toss.px = eng.pos.avg_price * 1.105       # +10% → 1차 익절 (절반)
-    asyncio.run(eng.manage_once())
-    assert eng.pos.tp1_done and eng.pos.qty > 0
-    eng.toss.px = eng.pos.avg_price * 1.21        # +20% → 나머지 전량
-    asyncio.run(eng.manage_once())
-    assert eng.pos is None and not eng.state_path.exists()
+    row = eng.articles.rows()[-1]
+    assert row["action"] == "buy" and row["ref_source"] == "prev_bar_close" and float(row["signal_rise_pct"]) >= 5
+    pos = eng.positions["ABC"]
+    assert pos.slot == 0 and pos.qty * pos.avg_price <= 100 / 3 + 0.01      # 칸 금액(1/3)만
+    assert any(ch == "entries" and "칸 1/3" in t and "매수 근거 리포트" in t for ch, t in eng.discord.sent)
+    age(eng, "ABC", 60)
+    base = pos.avg_price
+    for mult, n_after in ((1.051, None), (1.101, None), (1.151, None)):
+        eng.toss.px["ABC"] = base * mult
+        asyncio.run(eng.manage_one("ABC"))
+    assert eng.positions["ABC"].trailing
+    eng.toss.px["ABC"] = base * 1.151 * 0.94                 # 고점 대비 −6% → 남은 물량
+    asyncio.run(eng.manage_one("ABC"))
+    assert "ABC" not in eng.positions and not eng.state_path.exists()
     t = eng.trades.rows()[-1]
-    assert t["exit_reasons"] == "tp1|tp2" and float(t["pnl_usd"]) > 0 and t["mode"] == "shadow"
+    assert t["exit_reasons"] == "tp1|tp2|tp3|trailing_stop" and float(t["pnl_usd"]) > 0 and t["slot"] == "1"
+
+
+def test_three_slots_then_full(tmp_path, cfg):
+    eng = make_engine(tmp_path, cfg)
+    for i, sym in enumerate(["AAA", "BBB", "CCC", "DDD"]):
+        asyncio.run(eng.handle_alert(alert(sym, f"I{i}")))
+    assert sorted(eng.positions) == ["AAA", "BBB", "CCC"]
+    assert sorted(p.slot for p in eng.positions.values()) == [0, 1, 2]
+    assert eng.articles.rows()[-1]["action_reason"] == "risk:slots_full"
+    # 한 칸이 비면 다시 살 수 있다 (칸 잠금 없음)
+    age(eng, "AAA", 60)
+    eng.toss.px["AAA"] = eng.positions["AAA"].avg_price * 0.9
+    asyncio.run(eng.manage_one("AAA"))
+    assert "AAA" not in eng.positions
+    asyncio.run(eng.handle_alert(alert("EEE", "I9")))
+    assert "EEE" in eng.positions and eng.positions["EEE"].slot == 0
+
+
+def test_no_trigger_within_5min(tmp_path, cfg):
+    cfg["entry"]["trigger_window_min"] = 0.001                # 창을 아주 짧게 (시험용)
+    eng = make_engine(tmp_path, cfg)
+    eng.toss.default = 2.0 * 1.02                            # +2% 뿐
+    asyncio.run(eng.handle_alert(alert()))
+    assert eng.articles.rows()[-1]["action_reason"] == "no_trigger_5m" and not eng.positions and not eng.pending
 
 
 def test_jev_filter_skips_claude(tmp_path, cfg):
@@ -124,51 +170,58 @@ def test_stale_alert_not_traded(tmp_path, cfg):
     ai = FakeAI()
     eng = make_engine(tmp_path, cfg, ai)
     asyncio.run(eng.handle_alert(alert(age_s=600)))
-    assert ai.chats == 0 and eng.articles.rows()[-1]["action_reason"] == "stale_alert" and eng.pos is None
+    assert ai.chats == 0 and eng.articles.rows()[-1]["action_reason"] == "stale_alert" and not eng.positions
 
 
 def test_claude_bad_json_does_not_buy(tmp_path, cfg):
     eng = make_engine(tmp_path, cfg, FakeAI(claude="I think BUY"))
     asyncio.run(eng.handle_alert(alert()))
-    assert eng.pos is None and eng.articles.rows()[-1]["action_reason"] == "claude_pass"
+    assert not eng.positions and eng.articles.rows()[-1]["action_reason"] == "claude_pass"
     assert any(ch == "warnings" for ch, _ in eng.discord.sent)
 
 
-def test_duplicate_alert_ignored(tmp_path, cfg):
+def test_duplicate_alert_and_same_ticker_once_per_day(tmp_path, cfg):
     eng = make_engine(tmp_path, cfg)
     a = alert()
     asyncio.run(eng.handle_alert(a))
     asyncio.run(eng.handle_alert(a))
     assert len(eng.articles.rows()) == 1
+    age(eng, "ABC", 60)
+    eng.toss.px["ABC"] = eng.positions["ABC"].avg_price * 0.9
+    asyncio.run(eng.manage_one("ABC"))
+    asyncio.run(eng.handle_alert(alert("ABC", "ID2")))       # 같은 날 같은 종목 다른 기사
+    assert eng.articles.rows()[-1]["action_reason"] == "risk:ticker_already_traded_today"
 
 
-def test_stop_loss_and_daily_loss_limit(tmp_path, cfg):
-    cfg["risk"]["daily_loss_limit_usd"] = 1.0
+def test_consecutive_losses_stop_new_entries(tmp_path, cfg):
     eng = make_engine(tmp_path, cfg)
-    asyncio.run(eng.handle_alert(alert()))
-    eng.toss.px = eng.pos.avg_price * 0.94
-    asyncio.run(eng.manage_once())
-    assert eng.pos is None and eng.trades.rows()[-1]["exit_reasons"] == "stop_loss"
-    assert eng.risk.realized_today < -1.0
-    a2 = Alert("XYZ", "https://rtpr.io/a/ID2", "https://rtpr.io/a/ID2", now_ms(), now_ms())
-    asyncio.run(eng.handle_alert(a2))
-    assert eng.articles.rows()[-1]["action_reason"] == "risk:daily_loss_limit"
+    for i, sym in enumerate(["AAA", "BBB", "CCC"]):
+        asyncio.run(eng.handle_alert(alert(sym, f"L{i}")))
+        age(eng, sym, 60)
+        eng.toss.px[sym] = eng.positions[sym].avg_price * 0.9
+        asyncio.run(eng.manage_one(sym))
+    assert eng.risk.consecutive_losses == 3
+    asyncio.run(eng.handle_alert(alert("DDD", "L9")))
+    assert eng.articles.rows()[-1]["action_reason"] == "risk:consecutive_losses"
+    assert any("3연패" in t for _, t in eng.discord.sent)
 
 
-def test_restart_restores_position(tmp_path, cfg):
+def test_restart_restores_positions(tmp_path, cfg):
     eng = make_engine(tmp_path, cfg)
-    asyncio.run(eng.handle_alert(alert()))
-    qty = eng.pos.qty
+    asyncio.run(eng.handle_alert(alert("AAA", "R1")))
+    asyncio.run(eng.handle_alert(alert("BBB", "R2")))
+    qty = {s: p.qty for s, p in eng.positions.items()}
     eng2 = make_engine(tmp_path, cfg)
     asyncio.run(eng2.restore_state())
-    assert eng2.pos is not None and eng2.pos.qty == qty and eng2.pos.symbol == "ABC"
+    assert {s: p.qty for s, p in eng2.positions.items()} == qty
+    assert sorted(p.slot for p in eng2.positions.values()) == [0, 1]
 
 
 def test_no_sell_orders_when_all_markets_closed(tmp_path, cfg):
     eng = make_engine(tmp_path, cfg)
     asyncio.run(eng.handle_alert(alert()))
-    eng.windows = []                               # 장이 모두 닫힘
-    eng.toss.px = eng.pos.avg_price * 0.5          # 손절선 아래여도
-    asyncio.run(eng.manage_once())
-    assert eng.pos is not None and eng.pos.qty > 0  # 주문을 내지 않는다 (거부될 주문 반복 방지)
+    eng.windows = []
+    eng.toss.px["ABC"] = eng.positions["ABC"].avg_price * 0.5
+    asyncio.run(eng.manage_one("ABC"))
+    assert eng.positions["ABC"].qty > 0
     assert any(ch == "critical" for ch, _ in eng.discord.sent)

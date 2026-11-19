@@ -1,92 +1,124 @@
-from hbwb.strategy.rules import Fill, Position, entry2_triggered, exit_decision, plan_entry1, shares_for, update_peak
+import datetime as dt
+
+from hbwb.clock import ET
+from hbwb.strategy.risk import RiskBook
+from hbwb.strategy.rules import (Fill, Position, apply_exit, entry_signal, exit_decision, plan_entry, ref_from_bars,
+                                 shares_for, slot_budget, update_peak)
 
 MIN = 60_000
+T0 = int(dt.datetime(2026, 11, 18, 11, 0, tzinfo=ET).timestamp() * 1000)    # ET 11:00 (개장 직후 창 밖)
 
 
-def pos_with(qty, price, t=0, **kw):
-    p = Position("ABC", 100.0)
-    p.add(Fill("BUY", qty, price, t, "entry1"))
-    p.peak = price
-    for k, v in kw.items():
-        setattr(p, k, v)
+def pos_with(qty, price, t=T0):
+    p = Position("ABC", 0)
+    p.add(Fill("BUY", qty, price, t, "entry"))
     return p
 
 
-def test_shares_for_rounds_down_with_fee():
-    assert shares_for(100, 10, 0.001) == 9          # 10 주면 수수료 때문에 100 을 넘는다
-    assert shares_for(100, 0, 0.001) == 0
-    assert shares_for(0, 5, 0.0) == 0
+def step(p, price, t, cfg):
+    """한 번 점검 → 팔면 체결까지 반영."""
+    update_peak(p, price)
+    ex = exit_decision(p, price, t, None, cfg)
+    if ex:
+        p.add(Fill("SELL", ex.qty, price, t, ex.reason))
+        apply_exit(p, ex)
+    return ex
 
 
-def test_plan_entry1_split_and_single(cfg):
-    q1, total, limit = plan_entry1(100, 2.0, cfg, 0.001)
-    assert abs(limit - 2.02) < 1e-9
-    assert total == 49 and q1 == 24                 # 50% 내림
-    q1, total, _ = plan_entry1(100, 60.0, cfg, 0.001)
-    assert (q1, total) == (1, 1)                    # 1주는 나눌 수 없다
-    q1, total, _ = plan_entry1(100, 150.0, cfg, 0.001)
-    assert (q1, total) == (0, 0)                    # 못 산다
+def test_slot_budget_is_one_third(cfg):
+    assert abs(slot_budget(100, 100, cfg) - 100 / 3) < 1e-9
+    assert abs(slot_budget(150, 150, cfg) - 100 / 3) < 1e-9          # 예산 $100 을 넘게 쓰지 않는다
+    assert abs(slot_budget(90, 90, cfg) - 30) < 1e-9                 # 자산이 줄면 칸도 준다
+    assert slot_budget(100, 10, cfg) == 10                           # 현금보다 크지 않게
 
 
-def test_entry2_only_on_rise_within_window(cfg):
-    p = pos_with(10, 1.0, t=0)
-    assert not entry2_triggered(p, 1.02, 1 * MIN, cfg)
-    assert entry2_triggered(p, 1.031, 1 * MIN, cfg)
-    assert not entry2_triggered(p, 1.031, 11 * MIN, cfg)      # 10분 지나면 안 한다
-    assert not entry2_triggered(p, 0.90, 1 * MIN, cfg)        # 물타기 없음
-    p.tp1_done = True
-    assert not entry2_triggered(p, 1.05, 1 * MIN, cfg)        # 익절 뒤에는 안 한다
+def test_plan_entry_limit_premium(cfg):
+    qty, limit = plan_entry(100 / 3, 2.0, cfg, 0.001)
+    assert abs(limit - 2.014) < 1e-9 and qty == shares_for(100 / 3, 2.014, 0.001) == 16
+    assert plan_entry(100 / 3, 40.0, cfg, 0.001)[0] == 0             # 칸 금액으로 1주도 못 산다
 
 
-def test_stop_loss_sells_all_and_has_priority(cfg):
+def test_entry_signal_5pct_within_5min(cfg):
+    assert entry_signal(1.0, 1.04, T0 + MIN, T0, cfg) is None
+    assert entry_signal(1.0, 1.05, T0 + MIN, T0, cfg) == "signal"
+    assert entry_signal(1.0, 1.20, T0 + 5 * MIN + 1, T0, cfg) == "expired"
+    assert entry_signal(None, 1.20, T0 + MIN, T0, cfg) is None
+
+
+def test_ref_from_bars_uses_last_bar_ended_before_publish(cfg):
+    bars = [{"start_ms": T0 - 3 * MIN, "c": 1.0}, {"start_ms": T0 - MIN, "c": 1.1}, {"start_ms": T0, "c": 9.9}]
+    assert ref_from_bars(bars, T0, cfg) == 1.1
+    assert ref_from_bars([{"start_ms": T0 - 40 * MIN, "c": 1.0}], T0, cfg) is None   # 30분 넘게 낡음
+
+
+def test_stop_loss_always_and_grace(cfg):
     p = pos_with(10, 1.0)
-    ex = exit_decision(p, 0.95, 40 * MIN, 0, cfg)             # 손절 + 시간 + 장마감 모두 해당 → 손절
-    assert ex.qty == 10 and ex.reason == "stop_loss"
+    assert exit_decision(p, 0.93, T0 + 5_000, None, cfg).reason == "stop_loss"     # 30초 안에도 손절
+    assert exit_decision(p, 1.20, T0 + 5_000, None, cfg) is None                    # 30초 안에는 익절 안 봄
 
 
-def test_tp1_partial_then_tp2(cfg):
+def test_time_stops(cfg):
     p = pos_with(10, 1.0)
-    ex = exit_decision(p, 1.10, MIN, None, cfg)
-    assert (ex.qty, ex.reason) == (5, "tp1")
-    p.add(Fill("SELL", 5, 1.10, MIN, "tp1"))
-    assert p.tp1_done and p.qty == 5
-    update_peak(p, 1.15)
-    assert exit_decision(p, 1.15, 2 * MIN, None, cfg) is None
-    ex = exit_decision(p, 1.20, 3 * MIN, None, cfg)
-    assert (ex.qty, ex.reason) == (5, "tp2")
+    assert exit_decision(p, 1.019, T0 + 5 * MIN + 1000, None, cfg).reason == "time_stop_5m"
+    assert exit_decision(p, 1.03, T0 + 6 * MIN, None, cfg) is None
+    assert exit_decision(p, 1.049, T0 + 15 * MIN + 1000, None, cfg).reason == "time_stop_15m"
 
 
-def test_trailing_stop_after_tp1(cfg):
+def test_take_profit_ladder_then_trailing(cfg):
     p = pos_with(10, 1.0)
-    p.add(Fill("SELL", 5, 1.10, MIN, "tp1"))
-    update_peak(p, 1.18)
-    assert exit_decision(p, 1.13, 2 * MIN, None, cfg) is None
-    ex = exit_decision(p, 1.12, 2 * MIN, None, cfg)            # 1.18 × 0.95 = 1.121
-    assert (ex.qty, ex.reason) == (5, "trailing_stop")
+    t = T0 + MIN
+    assert step(p, 1.05, t, cfg).reason == "tp1" and p.qty == 7
+    assert step(p, 1.06, t + 1000, cfg) is None
+    assert step(p, 1.10, t + 2000, cfg).reason == "tp2" and p.qty == 4
+    assert not p.trailing
+    assert step(p, 1.16, t + 3000, cfg).reason == "tp3" and p.qty == 1 and p.trailing
+    assert step(p, 1.25, t + 4000, cfg) is None                         # 고점 갱신
+    assert step(p, 1.25 * 0.95, t + 5000, cfg).reason == "trailing_stop" and p.closed
 
 
-def test_no_trailing_before_tp1(cfg):
+def test_jump_straight_to_tp3_sells_levels_one_per_check(cfg):
     p = pos_with(10, 1.0)
-    update_peak(p, 1.08)
-    assert exit_decision(p, 1.02, MIN, None, cfg) is None
+    t = T0 + MIN
+    reasons = [step(p, 1.16, t + i * 1000, cfg).reason for i in range(3)]
+    assert reasons == ["tp3", "tp2", "tp1"] and p.qty == 1 and p.trailing
 
 
-def test_one_share_tp1_sells_all(cfg):
-    p = pos_with(1, 1.0)
-    ex = exit_decision(p, 1.11, MIN, None, cfg)
-    assert (ex.qty, ex.reason) == (1, "tp1_all_1share")
+def test_open_window_trailing_is_tighter(cfg):
+    t930 = int(dt.datetime(2026, 11, 18, 9, 30, tzinfo=ET).timestamp() * 1000)
+    p = pos_with(10, 1.0, t=t930 - 10 * MIN)
+    p.trailing, p.tp_done, p.peak = True, [0, 1, 2], 1.30
+    p.fills.append(Fill("SELL", 9, 1.2, t930, "tp"))
+    assert exit_decision(p, 1.30 * 0.965, t930, None, cfg).reason == "trailing_stop"    # −3% 창
+    assert exit_decision(p, 1.30 * 0.965, t930 + 30 * MIN, None, cfg) is None           # 창 밖은 −5%
 
 
-def test_time_limit_and_session_close(cfg):
-    p = pos_with(4, 1.0, t=0)
-    assert exit_decision(p, 1.01, 29 * MIN, None, cfg) is None
-    assert exit_decision(p, 1.01, 30 * MIN, None, cfg).reason == "time_limit"
-    assert exit_decision(p, 1.01, 10 * MIN, 14 * MIN, cfg).reason == "session_close"   # 끝 5분 전
+def test_small_quantity_ladder(cfg):
+    p = pos_with(2, 1.0)
+    assert step(p, 1.05, T0 + MIN, cfg).qty == 1
+    assert step(p, 1.10, T0 + MIN + 1000, cfg).qty == 1 and p.closed
 
 
-def test_realized_pnl_includes_fees(cfg):
-    p = Position("X", 100)
-    p.add(Fill("BUY", 10, 1.0, 0, "entry1", fee=0.01))
-    p.add(Fill("SELL", 10, 1.1, MIN, "tp2", fee=0.011))
-    assert abs(p.realized_pnl() - (1.0 - 0.021)) < 1e-9
-    assert p.closed
+def test_session_close(cfg):
+    p = pos_with(4, 1.0)
+    assert exit_decision(p, 1.01, T0 + MIN, T0 + 5 * MIN, cfg).reason == "session_close"
+
+
+def test_risk_percent_rules(cfg):
+    r = RiskBook(cfg)
+    r.roll_day("d1", 100.0)
+    assert r.block_reason("A", "x", 100.0, 3) == "slots_full"
+    assert r.block_reason("A", "x", 100.0, 2) is None
+    r.record_close(-6.0)
+    assert r.block_reason("A", "x", 94.0, 0) is None
+    r.record_close(-4.5)                                     # 그날 −10.5% → 중단
+    assert r.block_reason("A", "x", 89.5, 0) == "daily_loss_limit"
+    r.roll_day("d2", 89.5)
+    assert r.block_reason("A", "x", 89.5, 0) is None
+    for _ in range(3):
+        r.record_close(-0.1)
+    assert r.block_reason("A", "x", 89.0, 0) == "consecutive_losses"
+    r.roll_day("d3", 89.0)
+    r.record_open("A", "x")
+    assert r.block_reason("A", "x", 89.0, 0) == "ticker_already_traded_today"
+    assert r.block_reason("A", "y", 59.0, 0).startswith("halted:drawdown")   # 시작 $100 대비 −41%
+    assert r.block_reason("B", "y", 100.0, 0).startswith("halted")           # 정지는 사람이 풀 때까지
