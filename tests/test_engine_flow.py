@@ -225,3 +225,76 @@ def test_no_sell_orders_when_all_markets_closed(tmp_path, cfg):
     asyncio.run(eng.manage_one("ABC"))
     assert eng.positions["ABC"].qty > 0
     assert any(ch == "critical" for ch, _ in eng.discord.sent)
+
+
+def test_loop_death_stops_engine_for_restart(tmp_path, cfg):
+    eng = make_engine(tmp_path, cfg)
+
+    async def ok():
+        return None
+
+    async def boom():
+        raise ValueError("bug")
+
+    async def forever():
+        await asyncio.sleep(3600)
+    eng.start_with_retry = ok
+    eng.news_loop, eng.position_loop, eng.housekeeping_loop = boom, forever, forever
+    try:
+        asyncio.run(eng.run())
+        raise AssertionError("should raise")
+    except RuntimeError as e:
+        assert "news" in str(e)
+    assert any(ch == "critical" and "news" in t for ch, t in eng.discord.sent)
+
+
+def test_rtpr_fatal_is_engine_fatal(tmp_path, cfg):
+    from hbwb.engine.runner import EngineFatal
+    from hbwb.news.rtpr import RtprFatal
+    eng = make_engine(tmp_path, cfg)
+
+    class R:
+        async def alerts(self, on_event):
+            raise RtprFatal("RTPR 구독이 끝났다")
+            yield  # noqa: unreachable — 비동기 생성기로 만들기 위함
+    eng.rtpr = R()
+    try:
+        asyncio.run(eng.news_loop())
+        raise AssertionError("should raise")
+    except EngineFatal:
+        pass
+
+
+def test_start_retry_fatal_on_toss_auth(tmp_path, cfg):
+    from hbwb.broker.toss import TossError
+    from hbwb.engine.runner import EngineFatal
+    eng = make_engine(tmp_path, cfg)
+
+    async def bad():
+        raise TossError(403, "ip-not-allowed", "x")
+    eng.preflight = bad
+    try:
+        asyncio.run(eng.start_with_retry())
+        raise AssertionError("should raise")
+    except EngineFatal:
+        pass
+    assert any(ch == "critical" for ch, _ in eng.discord.sent)
+
+
+def test_preflight_restores_risk_and_seen(tmp_path, cfg):
+    eng = make_engine(tmp_path, cfg)
+    asyncio.run(eng.handle_alert(alert("AAA", "S1")))
+    age(eng, "AAA", 60)
+    eng.toss.px["AAA"] = eng.positions["AAA"].avg_price * 0.9
+    asyncio.run(eng.manage_one("AAA"))
+    eng2 = make_engine(tmp_path, cfg)
+
+    async def cal():
+        return {}
+    eng2.toss.us_calendar = cal
+    eng2.toss.buying_power_usd = None
+    asyncio.run(eng2.preflight())
+    assert eng2.risk.consecutive_losses == 1 and eng2.risk.realized_today < 0
+    assert "S1" in eng2.seen
+    assert eng2.risk.block_reason("AAA", __import__("hbwb.engine.runner", fromlist=["x"]).us_day(now_ms()), 100, 0) == \
+        "ticker_already_traded_today"

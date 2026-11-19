@@ -42,3 +42,31 @@ def test_daily_summary_window_and_render():
 
 def test_article_cols_are_unique():
     assert len(ARTICLE_COLS) == len(set(ARTICLE_COLS))
+
+
+def test_heartbeat_and_cumulative():
+    from hbwb.report.daily import cumulative, heartbeat_status
+    now = 10_000_000
+    ok, line = heartbeat_status({"t": now - 4 * 60_000, "mode": "live", "started_ms": now - 7_200_000,
+                                 "positions": {"ABC": 3}}, now)
+    assert ok and "ABC 3주" in line and "2.0시간째" in line
+    ok, line = heartbeat_status({"t": now - 40 * 60_000}, now)
+    assert not ok and "멈춤" in line
+    assert heartbeat_status(None, now)[0] is False
+    c = cumulative([{"exit_utc": "2026-11-19T01:00:00Z", "pnl_usd": "3"}, {"exit_utc": "2026-11-20T01:00:00Z", "pnl_usd": "-1"},
+                    {"exit_utc": "", "pnl_usd": "99"}])
+    assert c == {"trades": 2, "realized": 2.0, "wins": 1, "days": 2, "fees": 0.0}
+    txt = render({"window": "w", "alerts": 0, "articles": 0, "universe_ok": 0, "jev_pass": 0, "claude_called": 0,
+                  "claude_buy": 0, "filled": 0, "ai_cost": 0, "trades": [], "realized": 0, "wins": 0, "losses": 0,
+                  "fees": 0, "warnings": 0}, "live", None, 100, c, line)
+    assert "누적 (시작부터): 실현 $+2.00" in txt and "리셋" in txt
+
+
+def test_history_table():
+    from hbwb.engine.runner import report_day_key
+    from hbwb.report.daily import history, render_history
+    rows = history([{"exit_utc": "2026-11-19T01:00:00Z", "pnl_usd": "3"},      # KST 10:00 → 11-19
+                    {"exit_utc": "2026-11-19T23:30:00Z", "pnl_usd": "-1"},     # KST 11-20 08:30 → 11-19
+                    {"exit_utc": "2026-11-20T01:00:00Z", "pnl_usd": "2"}], report_day_key)
+    assert [(r["day"], r["trades"], r["cumulative"]) for r in rows] == [("2026-11-19", 2, 2.0), ("2026-11-20", 1, 4.0)]
+    assert "+4.0%" in render_history(rows, 100)

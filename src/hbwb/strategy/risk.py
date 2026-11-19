@@ -35,6 +35,28 @@ class RiskBook:
         self.realized_today += pnl
         self.consecutive_losses = self.consecutive_losses + 1 if pnl <= 0 else 0
 
+    def rebuild(self, trades: list[dict], day_key_of, us_day_of, parse_ms, open_entries: list[tuple[str, str]]) -> None:
+        """재시작해도 안전장치가 풀리지 않게 trades.csv 로 오늘 상태를 다시 만든다.
+        - 오늘(보고 기준 하루) 끝난 거래의 실현손익 합 · 끝에서부터 센 연속 손실
+        - 오늘(미국 날짜) 이미 산 종목 (끝난 거래 + 지금 보유)"""
+        today = self.day_key
+        rows = sorted((r for r in trades if r.get("exit_utc")), key=lambda r: r["exit_utc"])
+        todays = [r for r in rows if parse_ms(r["exit_utc"]) and day_key_of(parse_ms(r["exit_utc"])) == today]
+        self.realized_today = sum(float(r.get("pnl_usd") or 0) for r in todays)
+        streak = 0
+        for r in reversed(todays):
+            if float(r.get("pnl_usd") or 0) <= 0:
+                streak += 1
+            else:
+                break
+        self.consecutive_losses = streak
+        for r in rows:
+            t = parse_ms(r.get("entry_utc") or "")
+            if t:
+                self.traded.add((r.get("ticker"), us_day_of(t)))
+        for e in open_entries:
+            self.traded.add(tuple(e))
+
     def daily_loss_pct(self) -> float:
         if not self.day_start_equity:
             return 0.0

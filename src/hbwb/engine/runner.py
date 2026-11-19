@@ -16,7 +16,7 @@ from ..ai import claude as claude_mod
 from ..ai import jev as jev_mod
 from ..ai.openrouter import OpenRouter, OpenRouterError
 from ..broker.toss import TossClient, TossError
-from ..clock import ET, KST, fmt_kst, iso_utc, ms_to, now_ms
+from ..clock import ET, KST, fmt_kst, iso_utc, ms_to, now_ms, parse_iso_ms
 from ..config import ROOT, Secrets
 from ..eventlog import EventLog
 from ..ledger import articles as articles_ledger
@@ -29,6 +29,15 @@ from ..strategy.rules import (Fill, Position, apply_exit, entry_signal, exit_dec
 from ..universe import Universe
 from . import sessions as S
 from .executor import LiveExecutor, ShadowExecutor
+
+
+class EngineFatal(RuntimeError):
+    """사람이 고쳐야 하는 문제 (키 오류 · 구독 끝 · 설정). 자동 재시작해도 소용없으므로 정상 종료(0)로 끝낸다."""
+
+
+HEARTBEAT_S = 300
+CALENDAR_REFRESH_S = 1800
+TOSS_FATAL_CODES = {"invalid-client", "invalid_client", "unauthorized_client", "ip-not-allowed", "account-choice"}
 
 
 def report_day_key(ms: int) -> str:
@@ -71,6 +80,10 @@ class Engine:
         self._bg: set[asyncio.Task] = set()
         self._busy: set[str] = set()
         self.state_path = self.data_dir / "state" / "positions.json"
+        self.heartbeat_path = self.data_dir / "state" / "heartbeat.json"
+        self._cal_ms = 0
+        self._hb_ms = 0
+        self.started_ms = now_ms()
         self.executor = None
 
     # ── 알림 ────────────────────────────────────────────────────────────────
@@ -102,12 +115,21 @@ class Engine:
         await self.restore_state()
         _, eq = await self.equity()
         self.risk.roll_day(report_day_key(now_ms()), eq)
+        # 재시작해도 안전장치가 풀리지 않게: 오늘 실현손익 · 연패 · 오늘 산 종목을 거래 기록에서 복원
+        self.risk.rebuild(self.trades.rows(), report_day_key, us_day, parse_iso_ms,
+                          [(sym, us_day(p.entry_ms)) for sym, p in self.positions.items() if p.entry_ms])
+        if self.mode == "shadow":
+            self.shadow_realized = sum(float(r.get("pnl_usd") or 0) for r in self.trades.rows() if r.get("mode") == "shadow")
+        self.seen.update(r["article_id"] for r in self.articles.rows() if r.get("article_id"))
+        self.ev.write("risk_restored", realized_today=self.risk.realized_today, consecutive_losses=self.risk.consecutive_losses,
+                      traded_today=sorted(f"{a}@{b}" for a, b in self.risk.traded), seen=len(self.seen))
         c = self.cfg["capital"]
         await self.notify("warnings", f"▶️ 시작 ({self.mode}) · USD 현금 ${bp:.2f} · 수수료율 {self.fee_rate:.4%} · "
                                       f"예산 ${c['budget_usd']:.0f} ÷ {c['slots']}칸")
 
     async def refresh_calendar(self) -> None:
         self.windows = S.windows_from_calendar(await self.toss.us_calendar())
+        self._cal_ms = now_ms()
 
     # ── 상태 저장 (재시작 대비) ──────────────────────────────────────────────
     def save_state(self) -> None:
@@ -432,8 +454,8 @@ class Engine:
                 self.ev.write("alert", ticker=a.ticker, article=a.article_id, age_s=a.age_s)
                 self._spawn(self.handle_alert(a))
         except RtprFatal as e:
-            await self.notify("critical", f"🔴 {e} — 뉴스 수신 중단, 엔진을 멈춘다")
-            self._stop.set()
+            await self.notify("critical", f"🔴 {e} — 뉴스 수신 중단, 엔진을 멈춘다 (자동 재시작 안 함 · 키 · 구독 확인)")
+            raise EngineFatal(str(e)) from None
 
     async def position_loop(self) -> None:
         """종목마다 따로 관리한다 — 한 종목의 느린 매도가 다른 종목 손절을 막지 않게."""
@@ -445,28 +467,77 @@ class Engine:
                     self._spawn(self._manage_guarded(sym))
             await asyncio.sleep(interval)
 
+    def write_heartbeat(self) -> None:
+        """엔진이 살아 있다는 표시 — 일일 보고서가 읽어 '엔진 멈춤'을 알린다."""
+        self.heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
+        hb = {"t": now_ms(), "mode": self.mode, "started_ms": self.started_ms, "pid_note": "run_live",
+              "positions": {s: p.qty for s, p in self.positions.items()}, "pending": sorted(self.pending),
+              "last_alert_ms": self.last_alert_ms, "halted": self.risk.halted}
+        tmp = self.heartbeat_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(hb), encoding="utf-8")
+        tmp.replace(self.heartbeat_path)
+
     async def housekeeping_loop(self) -> None:
         while not self._stop.is_set():
-            await asyncio.sleep(60)
             t = now_ms()
             try:
-                if report_day_key(t) != self.risk.day_key:
+                if report_day_key(t) != self.risk.day_key:          # KST 09:00 — 하루 손익 · 연패 리셋
+                    prev = self.risk.day_key
                     _, eq = await self.equity()
                     self.risk.roll_day(report_day_key(t), eq)
-                if t % (30 * 60_000) < 60_000:
+                    self.ev.write("day_roll", prev=prev, new=self.risk.day_key, start_equity=eq)
+                if t - self._cal_ms >= CALENDAR_REFRESH_S * 1000:
                     await self.refresh_calendar()
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:  # noqa: BLE001 - 다음 바퀴에 다시
                 self.ev.write("housekeeping_error", err=str(e)[:200])
+            if t - self._hb_ms >= HEARTBEAT_S * 1000:
+                self._hb_ms = t
+                self.write_heartbeat()
+                self.ev.write("heartbeat", positions=len(self.positions), pending=len(self.pending), bg_tasks=len(self._bg))
             if self.session_now() in {"pre", "regular", "after"} and t - self.last_alert_ms > 30 * 60_000:
                 await self.notify("warnings", "⚠️ 미국 장 시간인데 RTPR 알림 30분째 0건 — 연결 · 'All articles' 규칙 확인",
                                   key="quiet", every_s=1800)
+            await asyncio.sleep(30)
+
+    async def start_with_retry(self) -> None:
+        """시작 점검이 네트워크 문제로 실패하면 기다렸다 다시 (맥이 막 깨어났을 때 등). 키 · IP 문제는 EngineFatal."""
+        wait = 10
+        while not self._stop.is_set():
+            try:
+                await self.preflight()
+                return
+            except TossError as e:
+                if e.status in (401, 403) or e.code in TOSS_FATAL_CODES:
+                    await self.notify("critical", f"🔴 시작 실패: 토스 {e.status} {e.code} — 키 · 허용 IP · 계좌 확인 (자동 재시작 안 함)")
+                    raise EngineFatal(f"toss {e.status} {e.code}") from None
+                err = f"토스 {e.status} {e.code}"
+            except Exception as e:  # noqa: BLE001 - 네트워크 등 일시적 문제
+                err = f"{type(e).__name__}: {str(e)[:120]}"
+            self.ev.write("start_retry", err=err, wait_s=wait)
+            await self.notify("warnings", f"⚠️ 시작 점검 실패 ({err}) — {wait}초 뒤 다시", key="start_retry", every_s=600)
+            await asyncio.sleep(wait)
+            wait = min(300, wait * 2)
 
     async def run(self) -> None:
-        await self.preflight()
-        tasks = [asyncio.create_task(c) for c in (self.news_loop(), self.position_loop(), self.housekeeping_loop())]
-        await self._stop.wait()
-        for t in tasks:
+        """세 루프 중 하나라도 끝나면(오류 · 버그) 엔진 전체를 멈춘다 → launchd 가 다시 켠다 (반쪽짜리로 계속 돌지 않게)."""
+        await self.start_with_retry()
+        if self._stop.is_set():
+            return
+        loops = {asyncio.create_task(c, name=n) for n, c in (("news", self.news_loop()), ("positions", self.position_loop()),
+                                                           ("housekeeping", self.housekeeping_loop()))}
+        stopper = asyncio.create_task(self._stop.wait(), name="stop")
+        done, _ = await asyncio.wait(loops | {stopper}, return_when=asyncio.FIRST_COMPLETED)
+        crashed = [t for t in done if t is not stopper]
+        for t in loops | {stopper}:
             t.cancel()
+        if crashed and not self._stop.is_set():
+            t = crashed[0]
+            exc = t.exception() if not t.cancelled() else None
+            self.ev.write("loop_died", loop=t.get_name(), err=repr(exc)[:300])
+            if isinstance(exc, EngineFatal):
+                raise exc
+            await self.notify("critical", f"🔴 엔진 루프 '{t.get_name()}' 가 멈췄다 ({type(exc).__name__ if exc else '끝남'}) — 엔진을 다시 시작한다")
+            raise RuntimeError(f"loop {t.get_name()} died: {exc!r}")
 
     def stop(self) -> None:
         self._stop.set()

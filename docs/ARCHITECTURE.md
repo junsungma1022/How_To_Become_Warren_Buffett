@@ -60,9 +60,21 @@ flowchart LR
 
 shadow 모드의 토스 클라이언트는 `allow_orders=False` 로 만들어 주문 함수가 예외를 던진다 (코드 버그가 있어도 주문이 나갈 길이 없다).
 
-## 4. 재시작
+## 4. 24/7 무인 운영 (`scripts/install_launchd.sh`)
 
-보유 중 상태(칸마다)는 `data/state/positions.json` 에 저장한다. 다시 켜면 계좌의 매도가능수량과 맞춰 보고 이어서 관리한다. 수량이 다르면 신규 매수를 멈추고 #critical.
+| launchd 작업 | 하는 일 | 다시 켜기 |
+|---|---|---|
+| `com.hbwb.engine` | `run_live.py --mode shadow|live --quiet` | 로그인 때 시작 · 오류로 죽으면(종료 코드 1) 60초 뒤 다시. 키 · 구독 · 허용 IP 문제(종료 코드 0)는 다시 켜지 않는다 |
+| `com.hbwb.awake` | `caffeinate -i -s` — 전원 연결 중 잠자기 방지 | 항상 |
+| `com.hbwb.daily-report` | 매일 09:00 KST 일일 보고서 → #daily_summary (엔진이 멈춰 있으면 #critical 도) | 매일 |
+| `com.hbwb.watchdog` | 10분마다 heartbeat 확인 → 15분 넘게 신호가 없으면 #critical (60분에 한 번) · 살아나면 알림 | 10분마다 |
+
+- **엔진 안**: 세 루프(뉴스 · 보유 관리 · 관리) 중 하나라도 끝나면 엔진 전체를 멈춘다 → launchd 가 다시 켠다 (반쪽짜리로 계속 돌지 않게)
+- **시작 점검 실패**(네트워크 · 맥이 막 깨어남)는 10초 → 최대 5분 간격으로 계속 다시 시도
+- **하루 리셋**: KST 09:00 에 하루 실현손익 · 연패 카운터를 0 으로 (일일 보고서와 같은 경계)
+- **재시작해도 안전장치 유지**: 시작할 때 `trades.csv` 로 오늘 실현손익 · 연패 · 오늘 산 종목을 다시 만들고, `articles.csv` 로 이미 처리한 기사를 다시 처리하지 않는다. 보유 종목은 `data/state/positions.json` 과 계좌 매도가능수량을 맞춰 보고 이어서 관리 (수량이 다르면 신규 매수 정지 + #critical)
+- **heartbeat**: 엔진이 5분마다 `data/state/heartbeat.json` 을 쓴다 (보유 · 대기 · 마지막 알림 시각 · 정지 사유)
+- 한계: 노트북 뚜껑을 닫으면 잠든다 · 맥의 공인 IP 가 바뀌면 토스 허용 IP 밖이 된다 (#critical) · 맥이 재부팅되면 로그인해야 시작
 
 ## 5. 외부 API 사실 (2026-11-18 확인)
 

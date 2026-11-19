@@ -84,3 +84,18 @@ def test_openrouter_retries_then_scrubs_error():
     except Exception as e:  # noqa: BLE001
         assert "yyyy" not in str(e)
     assert n["k"] == 3
+
+
+def test_discord_retries_on_429():
+    from hbwb.config import load_secrets
+    from hbwb.notify.discord import Discord
+    n = {"k": 0}
+
+    def h(req):
+        n["k"] += 1
+        if n["k"] == 1:
+            return httpx.Response(429, json={"retry_after": 0.01})
+        return httpx.Response(204)
+    sec = load_secrets({"HBWB_DISCORD_WEBHOOK_WARNINGS": "https://discord.com/api/webhooks/1/abc"})
+    d = Discord(sec, lambda *a, **k: {}, http=httpx.AsyncClient(transport=httpx.MockTransport(h)), sleep=_nosleep)
+    assert asyncio.run(d.send("warnings", "hi")) is True and n["k"] == 2

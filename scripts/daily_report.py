@@ -4,6 +4,7 @@
     python scripts/daily_report.py                # 오늘 09:00 에 끝난 하루
     python scripts/daily_report.py --dry-run      # 보내지 않고 화면에만
     python scripts/daily_report.py --date 2026-11-20
+    python scripts/daily_report.py --history      # 시작부터 날마다 표 (마지막 결과 보고용 · --dry-run 이면 화면만)
 
 매일 자동 실행: `bash scripts/install_launchd.sh` (맥 launchd · 09:00)
 """
@@ -13,17 +14,20 @@ from __future__ import annotations
 import argparse
 import asyncio
 import datetime as dt
+import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from hbwb.broker.toss import TossClient  # noqa: E402
-from hbwb.clock import KST  # noqa: E402
+from hbwb.clock import KST, now_ms  # noqa: E402
 from hbwb.config import ROOT, load_dotenv_file, load_secrets, load_settings, scrub  # noqa: E402
 from hbwb.eventlog import EventLog, read_events  # noqa: E402
 from hbwb.notify.discord import Discord  # noqa: E402
-from hbwb.report.daily import read_csv, render, summarize, window_ending  # noqa: E402
+from hbwb.engine.runner import report_day_key  # noqa: E402
+from hbwb.report.daily import (cumulative, heartbeat_status, history, read_csv, render, render_history,  # noqa: E402
+                               summarize, window_ending)
 
 
 async def account_equity(sec) -> dict | None:
@@ -46,20 +50,36 @@ async def main(args) -> int:
     data, logs = ROOT / cfg["paths"]["data_dir"], ROOT / cfg["paths"]["log_dir"]
     day = dt.date.fromisoformat(args.date) if args.date else dt.datetime.now(KST).date()
     w = window_ending(day, int(cfg["report"]["daily_time_kst"].split(":")[0]))
-    s = summarize(w, read_csv(data / "ledger" / "articles.csv"), read_csv(data / "ledger" / "trades.csv"), read_events(logs))
+    all_trades = read_csv(data / "ledger" / "trades.csv")
+    if args.history:
+        text = render_history(history(all_trades, report_day_key), cfg["capital"]["budget_usd"])
+        print(text)
+        if not args.dry_run:
+            d = Discord(sec, EventLog(logs, sec.all_values(), echo=False).write, prefix="HBWB")
+            ok = await d.send("daily_summary", text)
+            await d.aclose()
+            return 0 if ok else 1
+        return 0
+    s = summarize(w, read_csv(data / "ledger" / "articles.csv"), all_trades, read_events(logs))
+    hb_path = data / "state" / "heartbeat.json"
+    hb = json.loads(hb_path.read_text(encoding="utf-8")) if hb_path.exists() else None
+    alive, engine_line = heartbeat_status(hb, now_ms())
     modes = {t.get("mode") for t in s["trades"]} or {"live" if cfg["mode"]["live_enabled"] else "shadow"}
     equity = None
     try:
         equity = await account_equity(sec)
     except Exception as e:  # noqa: BLE001 - 계좌 조회가 안 돼도 보고서는 보낸다
         print("계좌 조회 실패:", scrub(e, sec.all_values()))
-    text = render(s, "/".join(sorted(m for m in modes if m)), equity, cfg["capital"]["budget_usd"])
+    text = render(s, "/".join(sorted(m for m in modes if m)), equity, cfg["capital"]["budget_usd"],
+                  cumulative(all_trades), engine_line)
     print(text)
     if args.dry_run:
         return 0
     ev = EventLog(logs, sec.all_values(), echo=False)
     d = Discord(sec, ev.write, prefix="HBWB")
     ok = await d.send("daily_summary", text)
+    if not alive:
+        await d.send("critical", engine_line + " — `launchctl list | grep hbwb` · logs/engine.err.log 확인")
     await d.aclose()
     ev.write("daily_report", ok=ok, window=w.label, realized=s["realized"], trades=len(s["trades"]))
     return 0 if ok else 1
@@ -69,4 +89,5 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--date")
+    ap.add_argument("--history", action="store_true")
     sys.exit(asyncio.run(main(ap.parse_args())))
