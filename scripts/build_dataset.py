@@ -13,8 +13,9 @@
     python scripts/build_dataset.py --stage build
 
 정답 라벨 (사용자 승인 2026-11-18):
-- label_win     : 기사 수신 +60초 뒤 첫 1분봉 시가에 1차 매수 → **실거래와 같은 분할 매수 · 분할 매도 규칙**으로 청산했을 때
-                  수수료를 빼고 이익이면 WIN, 아니면 LOSS. 그 시각에 살 수 없었으면(봉 없음) 빈칸.
+- triggered     : 실거래와 같은 매수 신호 — AI 판단 60초 뒤부터 발행 +5분 안에 기준가(발행 전 마지막 1분봉 종가) 대비 +5%
+- label_win     : 신호가 났을 때 칸 금액(자금의 1/3)으로 사서 **실거래와 같은 매도 규칙**(이전 프로그램)으로 청산했을 때
+                  수수료를 빼고 이익이면 WIN, 아니면 LOSS. 신호가 없었으면 빈칸.
 - label_surge30 : 보조 — 그날 고가 ≥ 전일 종가 × 1.3 (사용자 원안 '전날 종가 대비 +30%')
 """
 
@@ -135,7 +136,8 @@ async def stage_prices(arts, toss: TossClient, cfg, stores):
             return
         async with sem:
             try:
-                bars = await toss.candles(a["ticker"], "1m", count=80, before=iso_utc(a["pub_ms"] + 50 * 60_000))
+                # 발행 30분 전 ~ 170분 뒤 (트레일링으로 오래 들고 있는 경우까지)
+                bars = await toss.candles(a["ticker"], "1m", count=200, before=iso_utc(a["pub_ms"] + 170 * 60_000))
                 bars_s.put(a["k"], {"bars": bars})
             except TossError as e:
                 bars_s.put(a["k"], {"bars": [], "err": e.code})
@@ -213,11 +215,11 @@ COLS = ["article_id", "ticker", "published_utc", "published_et_hour", "weekday_e
         "jev_choice", "jev_grade", "jev_expected_grade", "jev_confidence",
         "jev_p_big_negative", "jev_p_small_negative", "jev_p_neutral", "jev_p_small_positive", "jev_p_big_positive",
         "jev_pred", "claude_called", "claude_decision", "claude_pred", "claude_grade", "claude_confidence", "claude_catalyst",
-        "tradeable", "sim_entry_price", "sim_pnl_usd", "sim_ret_pct", "sim_max_up_pct", "sim_max_down_pct",
-        "sim_exit_reasons", "sim_entry2", "label_win", "label_buy", "label_surge30", "day_high_vs_prev_close_pct"]
+        "ref_price", "triggered", "sim_entry_price", "sim_pnl_usd", "sim_ret_pct", "sim_max_up_pct", "sim_max_down_pct",
+        "sim_exit_reasons", "label_win", "label_buy", "label_surge30", "day_high_vs_prev_close_pct"]
 
 
-def build(arts, cfg, stores, out: Path, fee_rate: float, budget: float) -> int:
+def build(arts, cfg, stores, out: Path, fee_rate: float, slot_usd: float) -> int:
     import csv
     out.parent.mkdir(parents=True, exist_ok=True)
     n = 0
@@ -234,7 +236,8 @@ def build(arts, cfg, stores, out: Path, fee_rate: float, budget: float) -> int:
             t = ms_to(a["pub_ms"], ET)
             before = [b for b in bars if a["pub_ms"] - 15 * 60_000 <= b["start_ms"] and b["start_ms"] + 60_000 <= a["pub_ms"]]
             ctx = price_ctx(a, uc, stores["bars"])
-            sim = simulate(bars, a["pub_ms"], cfg, budget, fee_rate, 60, after_close_ms(a["pub_ms"])) if bars else None
+            sim = simulate(bars, a["pub_ms"], cfg, slot_usd, fee_rate, after_close_ms(a["pub_ms"])) if bars else None
+            ok = bool(sim and sim.triggered)
             day = next((d for d in daily if ms_to(d["start_ms"], ET).date() == t.date()), None)
             hi_pct = round(100 * (day["h"] / uc.prev_close - 1), 2) if day and uc.prev_close else None
             probs = j.get("probs") or {}
@@ -259,17 +262,17 @@ def build(arts, cfg, stores, out: Path, fee_rate: float, budget: float) -> int:
                 "claude_pred": ("BUY" if c.get("decision") == "BUY" else "SKIP") if c
                                else ("SKIP" if choice and choice not in cfg["jev"]["pass_choices"] else ""),
                 "claude_grade": c.get("grade"), "claude_confidence": c.get("conf"), "claude_catalyst": c.get("catalyst", ""),
-                "tradeable": "yes" if sim and sim.tradeable else "no",
-                "sim_entry_price": sim.entry_price if sim and sim.tradeable else None,
-                "sim_pnl_usd": sim.pnl_usd if sim and sim.tradeable else None,
-                "sim_ret_pct": sim.ret_pct if sim and sim.tradeable else None,
-                "sim_max_up_pct": sim.max_up_pct if sim and sim.tradeable else None,
-                "sim_max_down_pct": sim.max_down_pct if sim and sim.tradeable else None,
-                "sim_exit_reasons": sim.exit_reasons if sim and sim.tradeable else "",
-                "sim_entry2": ("yes" if sim.did_entry2 else "no") if sim and sim.tradeable else "",
-                "label_win": ("WIN" if sim.win else "LOSS") if sim and sim.tradeable else "",
+                "ref_price": sim.ref_price if sim else None,
+                "triggered": "yes" if ok else "no",
+                "sim_entry_price": sim.entry_price if ok else None,
+                "sim_pnl_usd": sim.pnl_usd if ok else None,
+                "sim_ret_pct": sim.ret_pct if ok else None,
+                "sim_max_up_pct": sim.max_up_pct if ok else None,
+                "sim_max_down_pct": sim.max_down_pct if ok else None,
+                "sim_exit_reasons": sim.exit_reasons if ok else "",
+                "label_win": ("WIN" if sim.win else "LOSS") if ok else "",
                 # Scorer 가 바로 비교할 수 있게 예측 열과 같은 값 이름(BUY/SKIP)으로 만든 정답
-                "label_buy": ("BUY" if sim.win else "SKIP") if sim and sim.tradeable else "",
+                "label_buy": ("BUY" if sim.win else "SKIP") if ok else "",
                 "label_surge30": ("YES" if hi_pct >= 30 else "NO") if hi_pct is not None else "",
                 "day_high_vs_prev_close_pct": hi_pct,
             }
@@ -297,7 +300,8 @@ async def main(args) -> int:
     stores = {k: Store(base / f"{k}.jsonl") for k in ("info", "daily", "bars", "jev", "claude")}
     arts = load_articles(Path(args.bodies), args)
     print(f"기사 {len(arts)}건 ({args.bodies})", flush=True)
-    budget, fee = cfg["capital"]["budget_usd"], cfg["fees"]["commission_rate_default"]
+    slot_usd = cfg["capital"]["budget_usd"] / cfg["capital"]["slots"]
+    fee = cfg["fees"]["commission_rate_default"]
     if args.estimate:
         estimate(arts, cfg, stores)
         return 0
@@ -320,7 +324,7 @@ async def main(args) -> int:
         estimate(arts, cfg, stores)
     elif args.stage == "build":
         out = ROOT / cfg["paths"]["data_dir"] / "knime" / "news_dataset.csv"
-        n = build(arts, cfg, stores, out, fee, budget)
+        n = build(arts, cfg, stores, out, fee, slot_usd)
         print(f"CSV {n}행 → {out}")
     return 0
 

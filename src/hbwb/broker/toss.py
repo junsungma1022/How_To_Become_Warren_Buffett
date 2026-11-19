@@ -263,6 +263,12 @@ class TossClient:
         r = await self._req("GET", "/api/v1/prices", "MARKET_DATA", params={"symbols": syms})
         return {x["symbol"]: float(x["lastPrice"]) for x in r or [] if _f(x.get("lastPrice"))}
 
+    async def recent_trades(self, symbol: str, count: int = 50) -> list[tuple[int, float]]:
+        """당일 최근 체결 (최대 50) → 시간순 [(ms, 가격)]."""
+        r = await self._req("GET", "/api/v1/trades", "MARKET_DATA", params={"symbol": symbol, "count": count})
+        out = [(parse_iso_ms(t.get("timestamp")), _f(t.get("price"))) for t in r or []]
+        return sorted((t, p) for t, p in out if t and p)
+
     async def stocks(self, symbols: Iterable[str]) -> list[dict]:
         r = await self._req("GET", "/api/v1/stocks", "STOCK", params={"symbols": ",".join(sorted(set(symbols)))})
         return list(r or [])

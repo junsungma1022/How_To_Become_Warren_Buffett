@@ -8,6 +8,8 @@ mode:
 
 capital:
   budget_usd: 100.0            # 이 프로그램이 쓸 최대 금액. 토스 USD 매수가능금액과 둘 중 작은 값
+  slots: 3                     # 3칸 (사용자 2026-11-19): 칸 하나 = 자금의 1/3 로 한 종목 · 3칸 모두 보유 중이면 매수 안 함
+                               # 이전 프로그램의 '다음 영업일까지 칸 잠금'은 쓰지 않는다 (토스는 해당 없음 · 사용자)
   # 토스 Open API 주문은 자동 환전하지 않는다 (FAQ) → 미리 앱에서 달러로 바꿔 둔다
 
 universe:                      # 종목 범위 (사용자 결정 2026-11-18: 이전 U1 의 시가총액 기준만 · 거래량 조건 뺌)
@@ -31,32 +33,38 @@ claude:                        # 2단계: 메인 판단 + 매수 근거 리포�
   max_tokens: 1800
   timeout_s: 60
 
-entry:                         # 분할매수 (2회)
-  first_fraction: 0.5          # 1차: 예산의 50%
-  second_trigger_pct: 3.0      # 2차: 1차 평균가 대비 +3% 를 넘으면 (오를 때만 추가 · 물타기 없음)
-  second_window_min: 10        # 1차 체결 뒤 이 시간 안에서만 2차
-  limit_slippage_pct: 1.0      # 지정가 = 매도1호가 × (1 + 1%)
-  fill_timeout_s: 20           # 이 시간 안에 안 채워진 매수 잔량은 취소
+entry:                         # 매수 (사용자 2026-11-19): Claude BUY 뒤 '뉴스 발행부터 5분 안에 +5%' 면 한 번에 매수
+  trigger_window_min: 5        # 뉴스 발행 시각부터 이 시간 안에서만
+  trigger_rise_pct: 5.0        # 기준가 대비 이만큼 오르면 매수 신호
+  ref_max_age_min: 30          # 기준가 = 발행 전에 끝난 마지막 1분봉 종가 (이보다 낡았으면 발행 뒤 첫 체결가)
+  limit_premium_pct: 0.7       # 지정가 = 신호 가격 × 1.007 (이전 프로그램)
+  fill_timeout_s: 5            # 이 시간 안에 안 채워진 잔량은 취소 (토스에는 IOC 가 없다)
+  poll_interval_s: 1.0         # 신호를 기다리는 동안 가격 확인 주기
+  decision_delay_s: 60         # 과거 시뮬레이션(KNIME 라벨)에서 AI 판단에 걸린다고 보는 시간
 
-exit:                          # 분할매도
-  stop_loss_pct: -5.0          # 평균가 대비 -5% → 전량
-  tp1_pct: 10.0                # +10% → 보유량의 50%
-  tp1_fraction: 0.5
-  tp2_pct: 20.0                # 남은 물량: +20% → 전량
-  trail_pct: 5.0               # 남은 물량: 1차 익절 뒤 최고가 대비 -5% → 전량
-  max_hold_min: 30             # 첫 체결 뒤 30분 → 전량
+exit:                          # 매도 = 이전 프로그램 position_monitor 그대로 (D-154 (5))
+  stop_loss_pct: -7.0          # ① 손익 ≤ −7% → 전량 (진입 직후에도)
+  grace_s: 30                  #    진입 30초 안에는 ①만 본다
+  time_stops:                  # ② (분, 최소 손익%) — 그 시간이 지났는데 손익이 이보다 낮으면 전량 (긴 것부터 본다)
+    - [15, 5.0]
+    - [5, 2.0]
+  take_profits:                # ③ (손익%, 원수량 비율) — 한 번 점검에 높은 단계부터 하나씩
+    - [15.0, 0.3]              #    TP3: 30% + 트레일링 켬
+    - [10.0, 0.3]              #    TP2: 30%
+    - [5.0, 0.3]               #    TP1: 30%
+  trail_pct: 5.0               # ④ 트레일링: 고점 대비 −5% → 남은 물량 (나머지 10%)
+  trail_open_pct: 3.0          #    ET 09:25~09:35 (정규장 개장 전후) 에는 −3%
   session_close_buffer_min: 5  # 애프터마켓 끝나기 5분 전 → 전량
-  limit_slippage_pct: 2.0      # 매도 지정가 = 매수1호가 × (1 - 2%) (장외는 지정가만 → 체결 우선)
+  limit_slippage_pct: 2.0      # 매도 지정가 = 매수1호가 × (1 − 2%) (장외는 지정가만 → 체결 우선)
   fill_timeout_s: 10           # 매도 미체결이면 가격을 고쳐 다시 (최대 reprice_max 번)
   reprice_max: 5
   poll_interval_s: 1.0         # 보유 중 가격 확인 주기 (토스 MARKET_DATA 한도 초당 15)
 
-risk:
-  max_positions: 1             # 동시에 한 종목만
-  daily_loss_limit_usd: 15.0   # 그날 실현 손실이 이만큼이면 신규 매수 중단
-  equity_floor_usd: 60.0       # 계좌(현금+평가) 가 이 아래면 시스템 정지
-  max_trades_per_day: 6
-  ticker_cooldown_min: 60      # 같은 종목은 청산 뒤 이 시간 동안 다시 사지 않는다
+risk:                          # 안전장치 — 금액이 아니라 % 기준 (사용자 2026-11-19 · 이전 risk_manager: 3연패 · 일 −10%)
+  daily_loss_limit_pct: 10.0   # 그날(KST 09:00 시작) 시작 자산 대비 실현손실 −10% → 그날 신규 매수 중단
+  max_consecutive_losses: 3    # 3연패 → 그날 신규 매수 중단
+  max_drawdown_pct: 40.0       # 시작 자금(capital.budget_usd) 대비 자산 −40% → 시스템 정지 (사람이 풀 때까지)
+  one_trade_per_ticker_per_day: true   # 같은 종목은 미국 날짜 하루에 한 번만 (이전 프로그램)
 
 sessions:                      # 사용자 결정: 프리마켓 · 정규장 · 애프터마켓 모두 (토스 데이마켓은 제외)
   trade_premarket: true

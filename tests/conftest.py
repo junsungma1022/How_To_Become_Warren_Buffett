@@ -29,6 +29,9 @@ def _isolate(monkeypatch, tmp_path):
         if k.startswith("HBWB_"):
             monkeypatch.delenv(k, raising=False)
     monkeypatch.chdir(tmp_path)
+    # 엔진이 저장소 안 data/ · logs/ 를 만들지 않게 기준 폴더를 임시 폴더로
+    import hbwb.engine.runner as runner
+    monkeypatch.setattr(runner, "ROOT", tmp_path)
     yield
 
 

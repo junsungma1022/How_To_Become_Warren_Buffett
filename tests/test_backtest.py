@@ -1,37 +1,47 @@
+import datetime as dt
+
+from hbwb.clock import ET
 from hbwb.strategy.backtest import simulate
 
 MIN = 60_000
+PUB = int(dt.datetime(2026, 11, 18, 11, 0, tzinfo=ET).timestamp() * 1000)
 
 
-def bars_from(prices, t0=0):
-    """prices: [(o,h,l,c)] 1분씩."""
-    return [{"start_ms": t0 + i * MIN, "o": o, "h": h, "l": l, "c": c, "v": 1000} for i, (o, h, l, c) in enumerate(prices)]
+def bars(seq, start=PUB - 2 * MIN):
+    """seq: [(o,h,l,c)] 1분씩, 발행 2분 전 봉부터."""
+    return [{"start_ms": start + i * MIN, "o": o, "h": h, "l": l, "c": c, "v": 100} for i, (o, h, l, c) in enumerate(seq)]
 
 
-def test_untradeable_when_no_bars_after_news(cfg):
-    bars = bars_from([(1, 1, 1, 1)] * 3, t0=-10 * MIN)
-    r = simulate(bars, 0, cfg, 100, 0.001)
-    assert not r.tradeable
+FLAT = (1.0, 1.0, 1.0, 1.0)
 
 
-def test_stop_loss_counts_first_in_bar(cfg):
-    # 진입 봉 (t=1분) 안에서 저가가 -5% 아래, 고가가 +10% 위 → 보수적으로 손절
-    bars = bars_from([(1, 1, 1, 1), (1.0, 1.2, 0.9, 1.0)] + [(1, 1, 1, 1)] * 5)
-    r = simulate(bars, 0, cfg, 100, 0.001)
-    assert r.tradeable and not r.win and r.exit_reasons.startswith("stop_loss")
+def test_no_trigger_means_no_trade(cfg):
+    r = simulate(bars([FLAT] * 2 + [(1.0, 1.04, 1.0, 1.03)] * 10), PUB, cfg, 100 / 3, 0.001)
+    assert not r.triggered and r.why == "no_trigger" and r.ref_price == 1.0
 
 
-def test_split_take_profit_win(cfg):
-    seq = [(1, 1, 1, 1), (1.0, 1.0, 1.0, 1.0), (1.0, 1.04, 1.0, 1.04), (1.04, 1.12, 1.04, 1.11), (1.11, 1.25, 1.11, 1.24), (1.24, 1.31, 1.24, 1.30)]
-    r = simulate(bars_from(seq), 0, cfg, 100, 0.001)
-    assert r.tradeable and r.win
-    assert "tp1" in r.exit_reasons and "tp2" in r.exit_reasons.split("|")[-1]
-    assert r.did_entry2                            # +3% 위로 가서 2차 매수
-    # 2차 매수로 평균가가 올라 tp2(평균가 +20%)는 1.28 위에서 닿는다
-    assert r.exit_reasons == "tp1|tp2"
+def test_trigger_after_window_ignored(cfg):
+    seq = [FLAT] * 2 + [FLAT] * 5 + [(1.0, 1.2, 1.0, 1.2)]       # 발행 5분 뒤에야 +20%
+    assert not simulate(bars(seq), PUB, cfg, 100 / 3, 0.001).triggered
 
 
-def test_time_limit_exit(cfg):
-    seq = [(1, 1, 1, 1)] + [(1.0, 1.01, 0.99, 1.0)] * 40
-    r = simulate(bars_from(seq), 0, cfg, 100, 0.001)
-    assert r.tradeable and r.exit_reasons == "time_limit" and not r.win   # 수수료만큼 손해
+def test_trigger_then_ladder_win(cfg):
+    # 발행 2분째에 +5% 신호 → 사다리 익절
+    seq = [FLAT] * 2 + [FLAT, (1.0, 1.06, 1.0, 1.06), (1.06, 1.12, 1.06, 1.11), (1.11, 1.30, 1.11, 1.29),
+                        (1.29, 1.30, 1.20, 1.21)] + [(1.21, 1.21, 1.21, 1.21)] * 3
+    r = simulate(bars(seq), PUB, cfg, 100 / 3, 0.001)
+    assert r.triggered and r.win
+    assert abs(r.entry_price - 1.05 * 1.007) < 1e-6
+    assert r.exit_reasons.startswith("tp")
+
+
+def test_trigger_then_stop_loss(cfg):
+    seq = [FLAT] * 2 + [FLAT, (1.0, 1.06, 1.0, 1.05), (1.05, 1.05, 0.95, 0.96)] + [FLAT] * 3
+    r = simulate(bars(seq), PUB, cfg, 100 / 3, 0.001)
+    assert r.triggered and not r.win and r.exit_reasons == "stop_loss"
+
+
+def test_time_stop_5m(cfg):
+    seq = [FLAT] * 2 + [FLAT, (1.0, 1.06, 1.0, 1.06)] + [(1.06, 1.065, 1.06, 1.06)] * 10
+    r = simulate(bars(seq), PUB, cfg, 100 / 3, 0.001)
+    assert r.triggered and r.exit_reasons == "time_stop_5m"

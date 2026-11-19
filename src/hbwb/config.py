@@ -104,19 +104,26 @@ def load_settings(path: Path = SETTINGS_PATH) -> dict:
 
 
 def _validate(cfg: dict) -> None:
-    e, x, r = cfg["entry"], cfg["exit"], cfg["risk"]
+    e, x, r, c = cfg["entry"], cfg["exit"], cfg["risk"], cfg["capital"]
     problems = []
-    if not 0 < e["first_fraction"] <= 1:
-        problems.append("entry.first_fraction 은 (0, 1]")
+    if c["budget_usd"] <= 0:
+        problems.append("capital.budget_usd > 0")
+    if int(c["slots"]) < 1:
+        problems.append("capital.slots >= 1")
+    if e["trigger_rise_pct"] <= 0 or e["trigger_window_min"] <= 0:
+        problems.append("entry.trigger_rise_pct · trigger_window_min > 0")
     if x["stop_loss_pct"] >= 0:
         problems.append("exit.stop_loss_pct 는 음수")
-    if not 0 < x["tp1_pct"] < x["tp2_pct"]:
-        problems.append("0 < exit.tp1_pct < exit.tp2_pct")
-    if not 0 < x["tp1_fraction"] < 1:
-        problems.append("exit.tp1_fraction 은 (0, 1)")
-    if r["max_positions"] != 1:
-        problems.append("risk.max_positions 는 지금 1 만 지원")
-    if cfg["capital"]["budget_usd"] <= 0:
-        problems.append("capital.budget_usd > 0")
+    tps = [float(t[0]) for t in x["take_profits"]]
+    if tps != sorted(tps, reverse=True) or any(t <= 0 for t in tps):
+        problems.append("exit.take_profits 는 높은 단계부터 · 양수")
+    if sum(float(t[1]) for t in x["take_profits"]) >= 1:
+        problems.append("exit.take_profits 비율 합 < 1 (나머지는 트레일링)")
+    mins = [float(t[0]) for t in x["time_stops"]]
+    if mins != sorted(mins, reverse=True):
+        problems.append("exit.time_stops 는 긴 시간부터")
+    for k in ("daily_loss_limit_pct", "max_drawdown_pct"):
+        if not 0 < float(r[k]) < 100:
+            problems.append(f"risk.{k} 는 (0, 100) 퍼센트")
     if problems:
         raise ValueError("settings.yaml 오류: " + " · ".join(problems))
