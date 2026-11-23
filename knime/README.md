@@ -50,7 +50,7 @@ File Reader ─ Row Filter(triggered = yes) ─ Column Filter ─ Partitioning(7
     └─(30%)────────────────────────── 각 Predictor ─ Scorer (label_win vs Prediction(label_win))
 ```
 
-- **Column Filter** (입력으로 쓸 열만): `session`, `published_et_hour`, `log10_market_cap`, `change_vs_prev_close_pct`,
+- **Column Filter** (입력으로 쓸 열만): `session`, `published_et_hour`, `log10_market_cap`, `change_vs_prev_close_pct`, `sim_entry_rise_pct`,
   `ret_15m_before_pct`, `volume_15m_before`, `jev_expected_grade`, `jev_confidence`, `jev_p_*` 5개, `title_len`, `label_win`
   (`label_buy` · `jev_pred` · `claude_*` 는 빼거나 비교 실험용으로만)
   - **넣으면 안 되는 열** (미래 정보 · 정답 복사본): `sim_*`, `ref_price`(넣어도 되지만 가격 수준일 뿐), `day_high_vs_prev_close_pct`, `label_surge30`, `label_buy`
@@ -61,6 +61,11 @@ File Reader ─ Row Filter(triggered = yes) ─ Column Filter ─ Partitioning(7
 - **Logistic Regression Learner**: Target `label_win`
 - **Scorer**: 세 모델의 Accuracy · Precision 비교 → 가장 나은 규칙을 `config/settings.yaml` 에 반영할지 결정
   (반영하면 `docs/DECISIONS.md` 에 근거와 함께 기록 → 발표에서 "KNIME 결과로 설계를 바꿨다")
+
+**매수 상한 정하기 (D-15)**: 실거래는 지금 +10% 위에서는 사지 않는다 (임시값). 데이터셋은 상한 없이 시뮬레이션하고
+`sim_entry_rise_pct`(산 순간 기준가 대비 상승률)를 남긴다. Decision Tree 의 갈림 조건에 `sim_entry_rise_pct > x` 가 나오면
+그 x 를 `config/settings.yaml` `entry.trigger_max_rise_pct` 로 바꾸고 `docs/DECISIONS.md` 에 새 D-번호로 남긴다.
+(보조: Row Filter `triggered = yes` → Scatter Plot X `sim_entry_rise_pct`, Y `sim_ret_pct`, 색 `label_win`)
 
 주의: WIN 이 LOSS 보다 훨씬 적으면 Accuracy 가 과대평가된다 (수업 13주차 '불균형 라벨'). Precision 을 본다.
 

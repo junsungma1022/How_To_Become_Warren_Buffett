@@ -13,9 +13,9 @@ flowchart LR
     N["📰 RTPR 실시간 보도자료"] --> U["🔎 종목 범위<br/>시총 $5M~$300M"]
     U --> J["🧮 Jev<br/>5단계 분류 · 쓰레기 컷"]
     J -- "작은/큰 호재" --> C["🧠 Claude Opus 5.5<br/>최종 판단 + 매수 근거 리포트"]
-    C -- BUY --> W["⏱️ 발행 5분 안 +5%?"]
+    C -- BUY --> W["⏱️ 발행 5분 안 +5% ~ +10%?"]
     W -- 예 --> T["💸 토스증권<br/>3칸 중 1칸 매수 → 사다리 매도"]
-    T --> D["🔔 Discord 알림 · 09:00 일일 보고서"]
+    T --> D["🔔 Discord 알림 · 10:00 일일 보고서"]
     T --> K["📊 KNIME 채점 · 규칙 학습"]
 ```
 
@@ -31,7 +31,7 @@ flowchart LR
 이전에 만든 자동매매 프로그램의 매수 · 매도 규칙을 그대로 쓰고, 매수 신호만 바꿨다.
 
 - 자금 3칸: 한 종목에 자금의 1/3 만. 3칸이 다 차면 더 사지 않는다
-- 매수: Claude 가 BUY 라고 한 뒤, 뉴스 발행부터 5분 안에 발행 시점 가격 대비 +5% 이상 오르면 한 번에 매수
+- 매수: Claude 가 BUY 라고 한 뒤, 뉴스 발행부터 5분 안에 발행 시점 가격 대비 +5% ~ +10% 구간이면 한 번에 매수 (+10% 위는 추격하지 않음 · 상한은 KNIME 결과로 다시 정함)
 - 매도: +5 · +10 · +15% 에서 30% 씩 익절 · 나머지는 고점 대비 −5% 트레일링 · 손절 −7% · 5분 뒤 +2% 미만 / 15분 뒤 +5% 미만이면 전량
 - 안전장치 (% 기준): 하루 실현손실 −10% 또는 3연패면 그날 매수 중단 · 자산이 시작 대비 −40% 면 정지
 
@@ -47,7 +47,7 @@ src/hbwb/
   strategy/rules.py       3칸 · 매수 신호 · 사다리 매도 규칙 (순수 함수 · 실거래와 시뮬레이션이 같이 씀)
   strategy/backtest.py    1분봉 시뮬레이션 (KNIME 정답 라벨)
   engine/runner.py        전체 흐름 · 보유 관리
-  report/daily.py         09:00 일일 보고서
+  report/daily.py         10:00 일일 보고서
 scripts/                  run_live · check_setup · daily_report · watchdog · build_dataset · install_launchd
 knime/                    KNIME 워크플로우 (.knwf) 와 노드 설정 가이드
 tests/                    pytest (네트워크 차단 · 키 유출 검사 포함)
@@ -69,7 +69,7 @@ brew install pre-commit gitleaks && pre-commit install
 ### 24/7 무인 운영
 
 ```bash
-bash scripts/install_launchd.sh --engine shadow   # 엔진 상시 실행(주문 없음) + 09:00 보고서 + 10분 감시 + 잠자기 방지
+bash scripts/install_launchd.sh --engine shadow   # 엔진 상시 실행(주문 없음) + 10:00 보고서 + 10분 감시 + 잠자기 방지
 # 실거래: settings.yaml 의 mode.live_enabled: true 로 바꾼 뒤
 bash scripts/install_launchd.sh --engine live
 bash scripts/install_launchd.sh --status          # 상태 · 마지막 종료 코드 · heartbeat
@@ -78,7 +78,8 @@ bash scripts/install_launchd.sh --stop-engine     # 엔진만 내림
 ```
 
 - 엔진이 오류로 죽으면 60초 뒤 자동으로 다시 켜지고, 재시작해도 그날 손실 한도 · 연패 · 산 종목 기록이 이어진다
-- 매일 09:00 KST: 일일 보고서 (계좌 · 하루 손익 · 누적 · 엔진 상태) 를 보내고 하루 손실 · 연패 카운터를 리셋
+- 시작할 때 계좌와 기록을 맞춘다: 엔진이 걸어 둔 미체결 주문은 취소, 기록에 없는 보유가 있으면 #critical + 신규 매수 멈춤
+- 매일 10:00 KST: 일일 보고서 (계좌 · 하루 손익 · 누적 · 엔진 상태) 를 보내고 하루 손실 · 연패 카운터를 리셋
 - 실거래 전 확인: 토스 앱에서 **달러로 환전** (Open API 는 자동 환전하지 않는다) · 토스 허용 IP 에 이 맥의 공인 IP 등록
 - 노트북은 **뚜껑을 열고 전원에 연결**해 둔다 (뚜껑을 닫으면 잠든다)
 
