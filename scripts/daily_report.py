@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""매일 KST 09:00 하루 손익 보고서 → Discord #daily_summary.
+"""매일 KST 10:00 하루 손익 보고서 → Discord #daily_summary.
 
-    python scripts/daily_report.py                # 오늘 09:00 에 끝난 하루
+    python scripts/daily_report.py                # 오늘 10:00 에 끝난 하루
     python scripts/daily_report.py --dry-run      # 보내지 않고 화면에만
     python scripts/daily_report.py --date 2026-11-20
     python scripts/daily_report.py --history      # 시작부터 날마다 표 (마지막 결과 보고용 · --dry-run 이면 화면만)
 
-매일 자동 실행: `bash scripts/install_launchd.sh` (맥 launchd · 09:00)
+매일 자동 실행: `bash scripts/install_launchd.sh` (맥 launchd · 10:00)
 """
 
 from __future__ import annotations
@@ -16,13 +16,14 @@ import asyncio
 import datetime as dt
 import json
 import sys
+from functools import partial
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from hbwb.broker.toss import TossClient  # noqa: E402
 from hbwb.clock import KST, now_ms  # noqa: E402
-from hbwb.config import ROOT, load_dotenv_file, load_secrets, load_settings, scrub  # noqa: E402
+from hbwb.config import ROOT, day_hour, load_dotenv_file, load_secrets, load_settings, scrub  # noqa: E402
 from hbwb.eventlog import EventLog, read_events  # noqa: E402
 from hbwb.notify.discord import Discord  # noqa: E402
 from hbwb.engine.runner import report_day_key  # noqa: E402
@@ -49,10 +50,10 @@ async def main(args) -> int:
     cfg, sec = load_settings(), load_secrets()
     data, logs = ROOT / cfg["paths"]["data_dir"], ROOT / cfg["paths"]["log_dir"]
     day = dt.date.fromisoformat(args.date) if args.date else dt.datetime.now(KST).date()
-    w = window_ending(day, int(cfg["report"]["daily_time_kst"].split(":")[0]))
+    w = window_ending(day, day_hour(cfg))
     all_trades = read_csv(data / "ledger" / "trades.csv")
     if args.history:
-        text = render_history(history(all_trades, report_day_key), cfg["capital"]["budget_usd"])
+        text = render_history(history(all_trades, partial(report_day_key, hour=day_hour(cfg))), cfg["capital"]["budget_usd"])
         print(text)
         if not args.dry_run:
             d = Discord(sec, EventLog(logs, sec.all_values(), echo=False).write, prefix="HBWB")

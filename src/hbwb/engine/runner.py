@@ -11,14 +11,15 @@ import datetime as dt
 import json
 import uuid
 from dataclasses import asdict
+from functools import partial
 
 from ..ai import claude as claude_mod
 from ..ai import jev as jev_mod
 from ..ai.openrouter import OpenRouter, OpenRouterError
-from ..broker.toss import TossClient, TossError
-from ..clock import ET, KST, fmt_kst, iso_utc, ms_to, now_ms, parse_iso_ms
-from ..config import ROOT, Secrets
-from ..eventlog import EventLog
+from ..broker.toss import TossClient, TossError, raw_after_end, toss_after_end
+from ..clock import ET, KST, fmt_et, fmt_kst, iso_utc, ms_to, now_ms, parse_iso_ms
+from ..config import ROOT, Secrets, day_hour
+from ..eventlog import EventLog, read_events
 from ..ledger import articles as articles_ledger
 from ..ledger import trades as trades_ledger
 from ..news.rtpr import Alert, RtprClient, RtprFatal
@@ -40,9 +41,12 @@ CALENDAR_REFRESH_S = 1800
 TOSS_FATAL_CODES = {"invalid-client", "invalid_client", "unauthorized_client", "ip-not-allowed", "account-choice"}
 
 
-def report_day_key(ms: int) -> str:
-    """KST 09:00 ~ 다음날 09:00 을 하루로 (일일 보고서와 같은 경계)."""
-    return (ms_to(ms, KST) - dt.timedelta(hours=9)).strftime("%Y-%m-%d")
+DEFAULT_DAY_HOUR = 10   # settings.yaml report.daily_time_kst 와 같게 (사용자 2026-11-23: 09:00 → 10:00)
+
+
+def report_day_key(ms: int, hour: int = DEFAULT_DAY_HOUR) -> str:
+    """KST hour:00 ~ 다음날 hour:00 을 하루로 (일일 보고서와 같은 경계)."""
+    return (ms_to(ms, KST) - dt.timedelta(hours=hour)).strftime("%Y-%m-%d")
 
 
 def us_day(ms: int) -> str:
@@ -82,9 +86,12 @@ class Engine:
         self.state_path = self.data_dir / "state" / "positions.json"
         self.heartbeat_path = self.data_dir / "state" / "heartbeat.json"
         self._cal_ms = 0
+        self._after_raw_logged: int | None = None
         self._hb_ms = 0
         self.started_ms = now_ms()
         self.executor = None
+        self.day_hour = day_hour(cfg)
+        self.day_key_of = partial(report_day_key, hour=self.day_hour)
 
     # ── 알림 ────────────────────────────────────────────────────────────────
     async def notify(self, channel: str, text: str, key: str | None = None, every_s: float = 0) -> None:
@@ -113,10 +120,12 @@ class Engine:
         self.executor = (LiveExecutor(self.toss, self.cfg, self.ev.write, self.notify, self.fee_rate) if self.mode == "live"
                          else ShadowExecutor(self.cfg, self.ev.write, self.fee_rate, self.toss.quote))
         await self.restore_state()
+        if self.mode == "live":
+            await self.reconcile_account()
         _, eq = await self.equity()
-        self.risk.roll_day(report_day_key(now_ms()), eq)
+        self.risk.roll_day(self.day_key_of(now_ms()), eq)
         # 재시작해도 안전장치가 풀리지 않게: 오늘 실현손익 · 연패 · 오늘 산 종목을 거래 기록에서 복원
-        self.risk.rebuild(self.trades.rows(), report_day_key, us_day, parse_iso_ms,
+        self.risk.rebuild(self.trades.rows(), self.day_key_of, us_day, parse_iso_ms,
                           [(sym, us_day(p.entry_ms)) for sym, p in self.positions.items() if p.entry_ms])
         if self.mode == "shadow":
             self.shadow_realized = sum(float(r.get("pnl_usd") or 0) for r in self.trades.rows() if r.get("mode") == "shadow")
@@ -128,8 +137,15 @@ class Engine:
                                       f"예산 ${c['budget_usd']:.0f} ÷ {c['slots']}칸")
 
     async def refresh_calendar(self) -> None:
-        self.windows = S.windows_from_calendar(await self.toss.us_calendar())
+        cal = await self.toss.us_calendar()
+        self.windows = S.windows_from_calendar(cal)
         self._cal_ms = now_ms()
+        raw = raw_after_end((cal or {}).get("today"))
+        if raw and raw != self._after_raw_logged:
+            self._after_raw_logged = raw
+            used = toss_after_end(raw)
+            # 토스 장 캘린더가 애프터 끝을 몇 시로 주는지 남긴다 (19:50 이면 그대로 · 20:00 이면 10분 당겨 씀 — D-13)
+            self.ev.write("after_end", raw_et=fmt_et(raw), used_et=fmt_et(used), adjusted=used != raw)
 
     # ── 상태 저장 (재시작 대비) ──────────────────────────────────────────────
     def save_state(self) -> None:
@@ -164,6 +180,50 @@ class Engine:
             self.ev.write("restore", symbol=sym, qty=pos.qty, slot=pos.slot)
             await self.notify("warnings", f"↩️ 재시작: {sym} {pos.qty}주 (칸 {pos.slot + 1}) 이어서 관리")
         self.save_state()
+
+    async def reconcile_account(self) -> None:
+        """시작할 때 계좌와 기록을 맞춘다 (live · 사용자 승인 2026-11-23 · D-14).
+
+        ① 이 엔진이 낸(이벤트 기록에 orderId 가 있는) 미체결 주문은 취소한다 — 재시작 전에 걸어 둔 매수가 나중에 체결돼
+          아무도 관리하지 않는 보유가 생기는 것을 막는다.
+        ② 기록(positions.json)에 없는 미국 주식 보유 · 엔진이 모르는 미체결 주문이 있으면 지우거나 팔지 않는다.
+          #critical 로 알리고 신규 매수만 멈춘다 (사람이 앱에서 확인 · 정리한 뒤 엔진을 다시 켠다).
+        토스 주문 목록에는 clientOrderId 가 없어서 (Order 모델 2026-11-23 확인) 내 주문은 이벤트 기록의 orderId 로만 가린다.
+        """
+        ignore = {str(x).upper() for x in (self.cfg.get("reconcile") or {}).get("ignore_symbols") or []}
+        mine = {str(e.get("order_id")) for e in read_events(self.ev.dir)
+                if e.get("kind") in {"order_sent", "order_reprice"} and e.get("order_id")}
+        unknown_orders: list[str] = []
+        cancelled = 0
+        for o in await self.toss.open_orders():
+            if o.order_id in mine:
+                try:
+                    await self.toss.cancel(o.order_id)
+                    cancelled += 1
+                    self.ev.write("startup_cancel", symbol=o.symbol, side=o.side, order_id=o.order_id, qty=o.quantity)
+                except TossError as e:
+                    unknown_orders.append(f"{o.symbol} {o.side} 취소 실패({e.code})")
+            elif o.symbol.upper() not in ignore:
+                unknown_orders.append(f"{o.symbol} {o.side} {o.quantity:g}주")
+        if cancelled:
+            await asyncio.sleep(1.0)       # 취소가 반영된 뒤 보유를 본다 (부분 체결분까지)
+        orphans: list[str] = []
+        for it in (await self.toss.holdings() or {}).get("items") or []:
+            sym = str(it.get("symbol") or "").upper()
+            qty = float(it.get("quantity") or 0)
+            country = str(it.get("marketCountry") or "").upper()
+            if qty <= 0 or sym in ignore or sym in self.positions:
+                continue
+            if country in {"KR", "KRX", "KOR"} or str(it.get("currency") or "").upper() == "KRW":
+                continue                    # 국내 주식은 이 엔진과 무관
+            orphans.append(f"{sym} {qty:g}주")
+        self.ev.write("reconcile", cancelled=cancelled, orphans=orphans, unknown_orders=unknown_orders)
+        if orphans or unknown_orders:
+            self.risk.halted = "account_mismatch " + " · ".join(orphans + unknown_orders)
+            await self.notify("critical", "🔴 시작 점검: 기록에 없는 " + " · ".join(
+                ([f"보유 {', '.join(orphans)}"] if orphans else []) + ([f"미체결 {', '.join(unknown_orders)}"] if unknown_orders else []))
+                + " — 신규 매수 멈춤 (기존 보유 관리는 계속). 앱에서 확인 · 정리한 뒤 엔진 재시작. "
+                  "직접 들고 있는 종목이면 settings.yaml reconcile.ignore_symbols 에 넣는다")
 
     # ── 세션 · 칸 ────────────────────────────────────────────────────────────
     def session_now(self, t: int | None = None) -> str | None:
@@ -312,6 +372,7 @@ class Engine:
             ref, src = await self.reference_price(sym, pub)
             row.update(ref_price=ref, ref_source=src)
             poll = self.cfg["entry"]["poll_interval_s"]
+            over_cap = 0                     # 상한(+10%) 위라서 안 산 횟수
             while True:
                 t = now_ms()
                 last = (await self.toss.last_prices([sym])).get(sym)
@@ -321,7 +382,15 @@ class Engine:
                 sig = entry_signal(ref, last or 0.0, t, pub, self.cfg) if last else (
                     "expired" if t > pub + self.cfg["entry"]["trigger_window_min"] * 60_000 else None)
                 if sig == "expired":
+                    if over_cap:
+                        return "over_cap_5m"           # 5분 내내 +10% 위에 있었거나 구간을 건너뜀 → 추격 매수 안 함
                     return "no_trigger_5m"
+                if sig == "over_cap":
+                    over_cap += 1
+                    rise = round(100 * (last / ref - 1), 2)
+                    row["over_cap_max_pct"] = max(rise, row.get("over_cap_max_pct") or rise)
+                    if over_cap == 1:
+                        self.ev.write("over_cap", ticker=sym, rise_pct=rise, cap_pct=self.cfg["entry"]["trigger_max_rise_pct"])
                 if sig == "signal":
                     break
                 await asyncio.sleep(poll)
@@ -425,7 +494,7 @@ class Engine:
                 await self.notify("critical", f"🔴 {sym} 청산했다고 기록했지만 계좌에 {held}주 남음 — 수동 확인")
         r = self.cfg["risk"]
         if self.risk.consecutive_losses >= r["max_consecutive_losses"]:
-            await self.notify("warnings", f"⏸️ {self.risk.consecutive_losses}연패 — 오늘(KST 09:00 까지) 신규 매수 중단")
+            await self.notify("warnings", f"⏸️ {self.risk.consecutive_losses}연패 — 오늘(KST {self.day_hour:02d}:00 까지) 신규 매수 중단")
         elif self.risk.daily_loss_pct() <= -abs(r["daily_loss_limit_pct"]):
             await self.notify("warnings", f"⏸️ 오늘 실현손실 {self.risk.daily_loss_pct():.1f}% — 오늘 신규 매수 중단")
 
@@ -481,10 +550,10 @@ class Engine:
         while not self._stop.is_set():
             t = now_ms()
             try:
-                if report_day_key(t) != self.risk.day_key:          # KST 09:00 — 하루 손익 · 연패 리셋
+                if self.day_key_of(t) != self.risk.day_key:         # KST 10:00 (report.daily_time_kst) — 하루 손익 · 연패 리셋
                     prev = self.risk.day_key
                     _, eq = await self.equity()
-                    self.risk.roll_day(report_day_key(t), eq)
+                    self.risk.roll_day(self.day_key_of(t), eq)
                     self.ev.write("day_roll", prev=prev, new=self.risk.day_key, start_equity=eq)
                 if t - self._cal_ms >= CALENDAR_REFRESH_S * 1000:
                     await self.refresh_calendar()

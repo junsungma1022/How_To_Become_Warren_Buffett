@@ -19,8 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from hbwb.ai import jev as jev_mod  # noqa: E402
 from hbwb.ai.openrouter import OpenRouter  # noqa: E402
-from hbwb.broker.toss import TossClient  # noqa: E402
-from hbwb.clock import fmt_kst  # noqa: E402
+from hbwb.broker.toss import TossClient, raw_after_end, toss_after_end  # noqa: E402
+from hbwb.clock import fmt_et, fmt_kst  # noqa: E402
 from hbwb.config import ENV_PATH, load_dotenv_file, load_secrets, load_settings, scrub  # noqa: E402
 from hbwb.engine import sessions as S  # noqa: E402
 from hbwb.notify.discord import CHANNELS, Discord  # noqa: E402
@@ -40,8 +40,13 @@ async def check_toss(cfg, sec, secrets) -> int:
         print(f"{OK if bp >= 1 else BAD} USD 매수가능금액 ${bp:.2f}" + ("" if bp >= 1 else " — 앱에서 달러 환전 필요"))
         fails += bp < 1
         print(f"{OK} 미국 주식 수수료율 {await toss.commission_rate_us()}")
-        for n, a, b in S.windows_from_calendar(await toss.us_calendar()):
+        cal = await toss.us_calendar()
+        for n, a, b in S.windows_from_calendar(cal):
             print(f"   세션 {n:8s} {fmt_kst(a)} ~ {fmt_kst(b)}  {'(매매)' if S.allowed(n, cfg) else ''}")
+        raw = raw_after_end((cal or {}).get("today"))
+        if raw:   # D-13: 토스 장 캘린더가 애프터 끝을 몇 시로 주는지 (19:50 이면 그대로 · 20:00 이면 엔진이 10분 당겨 씀)
+            used = toss_after_end(raw)
+            print(f"{OK} 애프터 끝: 장 캘린더 {fmt_et(raw)} → 엔진이 쓰는 값 {fmt_et(used)}" + (" (10분 당김)" if used != raw else " (그대로)"))
         q = await toss.quote("AAPL")
         print(f"{OK} 시세 AAPL bid {q.bid} ask {q.ask}")
         info = (await toss.stocks(["AAPL"]) or [{}])[0]

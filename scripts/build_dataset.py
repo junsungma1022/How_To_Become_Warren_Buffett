@@ -14,6 +14,7 @@
 
 정답 라벨 (사용자 승인 2026-11-18):
 - triggered     : 실거래와 같은 매수 신호 — AI 판단 60초 뒤부터 발행 +5분 안에 기준가(발행 전 마지막 1분봉 종가) 대비 +5%
+                  (실거래의 +10% 상한은 여기 적용하지 않는다 · 진입 상승률은 sim_entry_rise_pct → KNIME 결정트리로 상한을 정한다)
 - label_win     : 신호가 났을 때 칸 금액(자금의 1/3)으로 사서 **실거래와 같은 매도 규칙**(이전 프로그램)으로 청산했을 때
                   수수료를 빼고 이익이면 WIN, 아니면 LOSS. 신호가 없었으면 빈칸.
 - label_surge30 : 보조 — 그날 고가 ≥ 전일 종가 × 1.3 (사용자 원안 '전날 종가 대비 +30%')
@@ -215,7 +216,7 @@ COLS = ["article_id", "ticker", "published_utc", "published_et_hour", "weekday_e
         "jev_choice", "jev_grade", "jev_expected_grade", "jev_confidence",
         "jev_p_big_negative", "jev_p_small_negative", "jev_p_neutral", "jev_p_small_positive", "jev_p_big_positive",
         "jev_pred", "claude_called", "claude_decision", "claude_pred", "claude_grade", "claude_confidence", "claude_catalyst",
-        "ref_price", "triggered", "sim_entry_price", "sim_pnl_usd", "sim_ret_pct", "sim_max_up_pct", "sim_max_down_pct",
+        "ref_price", "triggered", "sim_entry_rise_pct", "sim_entry_price", "sim_pnl_usd", "sim_ret_pct", "sim_max_up_pct", "sim_max_down_pct",
         "sim_exit_reasons", "label_win", "label_buy", "label_surge30", "day_high_vs_prev_close_pct"]
 
 
@@ -264,6 +265,7 @@ def build(arts, cfg, stores, out: Path, fee_rate: float, slot_usd: float) -> int
                 "claude_grade": c.get("grade"), "claude_confidence": c.get("conf"), "claude_catalyst": c.get("catalyst", ""),
                 "ref_price": sim.ref_price if sim else None,
                 "triggered": "yes" if ok else "no",
+                "sim_entry_rise_pct": sim.entry_rise_pct if ok else None,
                 "sim_entry_price": sim.entry_price if ok else None,
                 "sim_pnl_usd": sim.pnl_usd if ok else None,
                 "sim_ret_pct": sim.ret_pct if ok else None,

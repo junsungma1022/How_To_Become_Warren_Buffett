@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 맥 launchd 로 24/7 무인 운영을 설치한다. 맥 시계 = KST 기준.
 #
-#   bash scripts/install_launchd.sh                  # 09:00 일일 보고서 + 10분마다 감시 (엔진은 손으로 켤 때)
+#   bash scripts/install_launchd.sh                  # 10:00 일일 보고서 + 10분마다 감시 (엔진은 손으로 켤 때)
 #   bash scripts/install_launchd.sh --engine shadow  # + 엔진 상시 실행 (주문 없음)
 #   bash scripts/install_launchd.sh --engine live    # + 엔진 상시 실행 (실제 주문 · settings.yaml live_enabled: true 필요)
 #   bash scripts/install_launchd.sh --stop-engine    # 엔진만 내린다 (보고서 · 감시는 그대로)
@@ -61,17 +61,20 @@ esac
 
 [[ -x "${PY}" ]] || { echo "가상환경이 없다: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"; exit 1; }
 mkdir -p "${AGENTS}" "${REPO}/logs"
+# 일일 보고서 시각 = settings.yaml report.daily_time_kst 의 시 (맥 시간대가 KST 라고 본다)
+REPORT_HOUR=$(sed -n 's/^ *daily_time_kst: *"\{0,1\}\([0-9][0-9]\):00.*/\1/p' "${REPO}/config/settings.yaml" | head -1)
+REPORT_HOUR=$((10#${REPORT_HOUR:-10}))
 
 plist "${L_REPORT}" "  <key>ProgramArguments</key>
   <array><string>${PY}</string><string>${REPO}/scripts/daily_report.py</string></array>
-  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>"
+  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>${REPORT_HOUR}</integer><key>Minute</key><integer>0</integer></dict>"
 load "${L_REPORT}"
 
 plist "${L_WATCH}" "  <key>ProgramArguments</key>
   <array><string>${PY}</string><string>${REPO}/scripts/watchdog.py</string></array>
   <key>StartInterval</key><integer>600</integer>"
 load "${L_WATCH}"
-echo "설치: 일일 보고서 (매일 09:00) · 감시 (10분마다)"
+echo "설치: 일일 보고서 (매일 ${REPORT_HOUR}:00 KST) · 감시 (10분마다)"
 
 if [[ "${1:-}" == "--engine" ]]; then
   MODE="${2:-}"
