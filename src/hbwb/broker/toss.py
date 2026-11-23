@@ -26,7 +26,7 @@ from typing import Any, Iterable
 
 import httpx
 
-from ..clock import parse_iso_ms
+from ..clock import ET, ms_to, parse_iso_ms
 from ..config import scrub
 from ..ratelimit import Limiter
 
@@ -296,13 +296,30 @@ class TossClient:
         await self.http.aclose()
 
 
+# 토스에서 애프터마켓 주문이 실제로 되는 끝 = 거래소 애프터 끝 − 10분 (ET 20:00 → 19:50 · 조기마감 17:00 → 16:50).
+# 근거: Auto_Trader_Futures D-171 ⑤ · FINDINGS §88 (토스 앱 세션 표). 장 캘린더가 정각(…:00)을 주면 거래소 시각으로 보고 당긴다.
+TOSS_AFTER_CUT_MIN = 10
+
+
+def toss_after_end(end_ms: int) -> int:
+    """애프터 끝 시각이 ET 정각이면 거래소 기준으로 보고 10분 당긴다 (이미 …:50 이면 그대로)."""
+    t = ms_to(end_ms, ET)
+    return end_ms - TOSS_AFTER_CUT_MIN * 60_000 if t.minute == 0 and t.second == 0 else end_ms
+
+
 def sessions_from_calendar_day(day: dict | None) -> dict[str, tuple[int, int]]:
-    """`UsMarketDay` → {세션: (시작 ms, 끝 ms)} (휴장 세션은 빠진다)."""
+    """`UsMarketDay` → {세션: (시작 ms, 끝 ms)} (휴장 세션은 빠진다 · 애프터 끝은 `toss_after_end` 로 보정)."""
     out = {}
     for key, name in (("dayMarket", "day"), ("preMarket", "pre"), ("regularMarket", "regular"), ("afterMarket", "after")):
         s = (day or {}).get(key)
         if s:
             a, b = parse_iso_ms(s.get("startTime")), parse_iso_ms(s.get("endTime"))
             if a and b:
-                out[name] = (a, b)
+                out[name] = (a, toss_after_end(b) if name == "after" else b)
     return out
+
+
+def raw_after_end(day: dict | None) -> int | None:
+    """보정 전 장 캘린더의 애프터 끝 (확인 · 기록용)."""
+    s = (day or {}).get("afterMarket") or {}
+    return parse_iso_ms(s.get("endTime"))

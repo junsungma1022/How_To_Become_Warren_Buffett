@@ -18,6 +18,7 @@ ARTICLE_COLS = [
     "jev_p_big_negative", "jev_p_small_negative", "jev_p_neutral", "jev_p_small_positive", "jev_p_big_positive",
     "jev_pass", "claude_called", "claude_decision", "claude_grade", "claude_confidence", "claude_catalyst",
     "claude_parse_error", "ref_price", "ref_source", "signal_utc", "signal_price", "signal_rise_pct",
+    "over_cap_max_pct",   # 상한(+10%) 위라서 안 샀을 때 본 최고 상승률
     "action", "action_reason", "ai_cost_usd", "mode",
 ]
 

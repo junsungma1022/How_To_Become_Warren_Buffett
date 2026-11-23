@@ -1,4 +1,7 @@
-"""매일 KST 09:00 하루 손익 보고서 (전날 09:00 ~ 오늘 09:00 · 미국 프리~애프터 한 바퀴가 이 안에 들어간다)."""
+"""매일 KST 10:00 하루 손익 보고서 (전날 10:00 ~ 오늘 10:00 · 미국 프리~애프터 한 바퀴가 이 안에 들어간다).
+
+경계 시각은 settings.yaml report.daily_time_kst (2026-11-23 09:00 → 10:00: 겨울엔 토스 애프터가 KST 09:50 에 끝난다).
+"""
 
 from __future__ import annotations
 
@@ -17,7 +20,7 @@ class Window:
     label: str
 
 
-def window_ending(day_kst: dt.date, hour: int = 9) -> Window:
+def window_ending(day_kst: dt.date, hour: int = 10) -> Window:
     end = dt.datetime.combine(day_kst, dt.time(hour, 0), KST)
     start = end - dt.timedelta(days=1)
     return Window(int(start.timestamp() * 1000), int(end.timestamp() * 1000),
@@ -106,7 +109,8 @@ def render(s: dict, mode: str, equity: dict | None, start_capital: float,
         rate = 100 * cum["wins"] / cum["trades"]
         lines.append(f"누적 (시작부터): 실현 ${cum['realized']:+.2f} · 거래 {cum['trades']}건 · 승률 {rate:.0f}% · "
                      f"거래한 날 {cum['days']}일 · 수수료 ${cum['fees']:.2f}")
-    lines.append("하루 손실 한도 · 연패 카운터는 지금(09:00) 리셋됐다.")
+    at = s["window"][-9:-4] if str(s["window"]).endswith(" KST") else ""
+    lines.append(f"하루 손실 한도 · 연패 카운터는 지금{f'({at})' if at else ''} 리셋됐다.")
     return "\n".join(lines)
 
 
@@ -118,7 +122,7 @@ def read_csv(path: Path) -> list[dict]:
 
 
 def history(trades: list[dict], day_key_of) -> list[dict]:
-    """보고 기준 하루(KST 09:00 시작)마다 [날, 거래 수, 승, 실현, 수수료] — 마지막 결과 보고용."""
+    """보고 기준 하루(KST 10:00 시작)마다 [날, 거래 수, 승, 실현, 수수료] — 마지막 결과 보고용."""
     days: dict[str, dict] = {}
     for t in trades:
         ms = parse_iso_ms(t.get("exit_utc")) if t.get("exit_utc") else None
@@ -138,7 +142,7 @@ def history(trades: list[dict], day_key_of) -> list[dict]:
 
 
 def render_history(rows: list[dict], start_capital: float) -> str:
-    lines = ["📈 **전체 기간 결과** (하루 = KST 09:00 시작)", "날짜 | 거래 | 승 | 실현 | 누적 | 누적 %"]
+    lines = ["📈 **전체 기간 결과** (하루 = KST 10:00 시작)", "날짜 | 거래 | 승 | 실현 | 누적 | 누적 %"]
     for r in rows:
         lines.append(f"{r['day']} | {r['trades']} | {r['wins']} | ${r['realized']:+.2f} | ${r['cumulative']:+.2f} | "
                      f"{100 * r['cumulative'] / start_capital:+.1f}%")

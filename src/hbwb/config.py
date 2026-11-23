@@ -103,6 +103,11 @@ def load_settings(path: Path = SETTINGS_PATH) -> dict:
     return cfg
 
 
+def day_hour(cfg: dict) -> int:
+    """하루 경계 시각 (KST 시) = 일일 보고서 시각."""
+    return int(str(cfg["report"]["daily_time_kst"]).split(":")[0])
+
+
 def _validate(cfg: dict) -> None:
     e, x, r, c = cfg["entry"], cfg["exit"], cfg["risk"], cfg["capital"]
     problems = []
@@ -112,6 +117,12 @@ def _validate(cfg: dict) -> None:
         problems.append("capital.slots >= 1")
     if e["trigger_rise_pct"] <= 0 or e["trigger_window_min"] <= 0:
         problems.append("entry.trigger_rise_pct · trigger_window_min > 0")
+    cap = e.get("trigger_max_rise_pct")
+    if cap is not None and float(cap) <= float(e["trigger_rise_pct"]):
+        problems.append("entry.trigger_max_rise_pct 는 trigger_rise_pct 보다 커야 함 (또는 null)")
+    hh, _, mm = str(cfg.get("report", {}).get("daily_time_kst", "")).partition(":")
+    if not (hh.isdigit() and 0 <= int(hh) <= 23 and mm == "00"):
+        problems.append('report.daily_time_kst 는 정각 "HH:00"')
     if x["stop_loss_pct"] >= 0:
         problems.append("exit.stop_loss_pct 는 음수")
     tps = [float(t[0]) for t in x["take_profits"]]

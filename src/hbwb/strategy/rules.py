@@ -106,13 +106,19 @@ def plan_entry(slot_usd: float, signal_price: float, cfg: dict, fee_rate: float)
 
 
 def entry_signal(ref_price: float | None, price: float, now_ms: int, published_ms: int, cfg: dict) -> str | None:
-    """'signal' · 'expired' · None(아직)."""
+    """'signal' · 'over_cap'(상한 위 — 아직 안 산다) · 'expired' · None(아직).
+
+    매수 구간 = 기준가 대비 [+trigger_rise_pct, +trigger_max_rise_pct] (사용자 2026-11-23: +5% ~ +10%).
+    상한 위면 사지 않고 5분 창 안에서 구간으로 돌아오는지 계속 본다. 상한이 null 이면 상한 없음."""
     e = cfg["entry"]
     if now_ms > published_ms + e["trigger_window_min"] * 60_000:
         return "expired"
-    if ref_price and price >= ref_price * (1 + e["trigger_rise_pct"] / 100) * (1 - 1e-9):
-        return "signal"
-    return None
+    if not ref_price or price < ref_price * (1 + e["trigger_rise_pct"] / 100) * (1 - 1e-9):
+        return None
+    cap = e.get("trigger_max_rise_pct")
+    if cap is not None and price > ref_price * (1 + float(cap) / 100) * (1 + 1e-9):
+        return "over_cap"
+    return "signal"
 
 
 def ref_from_bars(bars: list[dict], published_ms: int, cfg: dict) -> float | None:

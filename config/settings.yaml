@@ -36,6 +36,8 @@ claude:                        # 2단계: 메인 판단 + 매수 근거 리포�
 entry:                         # 매수 (사용자 2026-11-19): Claude BUY 뒤 '뉴스 발행부터 5분 안에 +5%' 면 한 번에 매수
   trigger_window_min: 5        # 뉴스 발행 시각부터 이 시간 안에서만
   trigger_rise_pct: 5.0        # 기준가 대비 이만큼 오르면 매수 신호
+  trigger_max_rise_pct: 10.0   # 상한 (사용자 2026-11-23 · 임시): 이보다 높으면 사지 않고 5분 안에 구간으로 돌아오는지 본다
+                               #   → KNIME 결정트리(sim_entry_rise_pct)로 다시 정한다 · null = 상한 없음
   ref_max_age_min: 30          # 기준가 = 발행 전에 끝난 마지막 1분봉 종가 (이보다 낡았으면 발행 뒤 첫 체결가)
   limit_premium_pct: 0.7       # 지정가 = 신호 가격 × 1.007 (이전 프로그램)
   fill_timeout_s: 5            # 이 시간 안에 안 채워진 잔량은 취소 (토스에는 IOC 가 없다)
@@ -61,10 +63,13 @@ exit:                          # 매도 = 이전 프로그램 position_monitor �
   poll_interval_s: 1.0         # 보유 중 가격 확인 주기 (토스 MARKET_DATA 한도 초당 15)
 
 risk:                          # 안전장치 — 금액이 아니라 % 기준 (사용자 2026-11-19 · 이전 risk_manager: 3연패 · 일 −10%)
-  daily_loss_limit_pct: 10.0   # 그날(KST 09:00 시작) 시작 자산 대비 실현손실 −10% → 그날 신규 매수 중단
+  daily_loss_limit_pct: 10.0   # 그날(KST 10:00 시작 · report.daily_time_kst) 시작 자산 대비 실현손실 −10% → 그날 신규 매수 중단
   max_consecutive_losses: 3    # 3연패 → 그날 신규 매수 중단
   max_drawdown_pct: 40.0       # 시작 자금(capital.budget_usd) 대비 자산 −40% → 시스템 정지 (사람이 풀 때까지)
   one_trade_per_ticker_per_day: true   # 같은 종목은 미국 날짜 하루에 한 번만 (이전 프로그램)
+
+reconcile:                     # 시작 점검 (D-14): 기록에 없는 미국 주식 보유 · 모르는 미체결 주문 → 신규 매수 멈춤 + #critical
+  ignore_symbols: []           # 같은 계좌에 직접 들고 있는 종목이 있으면 여기에 (예: [AAPL])
 
 sessions:                      # 사용자 결정: 프리마켓 · 정규장 · 애프터마켓 모두 (토스 데이마켓은 제외)
   trade_premarket: true
@@ -77,7 +82,9 @@ fees:
   commission_rate_default: 0.001
 
 report:
-  daily_time_kst: "09:00"
+  # 하루 경계 = 일일 보고서 시각 = 하루 손실 · 연패 리셋 (사용자 2026-11-23: 09:00 → 10:00)
+  # 토스 애프터마켓이 겨울(표준시) KST 09:50 에 끝나서 09:00 이면 장 중간에 하루가 끊긴다. 정각만 된다 (분은 00).
+  daily_time_kst: "10:00"
   tz: Asia/Seoul
 
 paths:

@@ -8,6 +8,7 @@
 - 한 봉 안의 순서는 시가 → 저가 → 고가 → 종가 (손절이 익절보다 먼저 닿았다고 본다)
 - 매도 체결가는 규칙이 발동한 선 그대로 (손절선 · 익절선 · 트레일링선), 시간 · 장마감 청산은 그 점의 가격
 - 수수료는 매수 · 매도 모두 fee_rate
+- 매수 상한(trigger_max_rise_pct)은 **적용하지 않는다** — 진입 상승률(entry_rise_pct)을 기록해 KNIME 이 상한을 정하게 한다
 신호가 없으면 triggered=False (매수 안 함).
 """
 
@@ -32,6 +33,7 @@ class SimResult:
     exit_reasons: str = ""
     win: bool = False
     why: str = ""
+    entry_rise_pct: float | None = None   # 신호가(지정가 프리미엄 전) ÷ 기준가 − 1 (%)
 
 
 def _rule_price(reason: str, pos: Position, cfg: dict, idx: int | None, p: float, gap: bool) -> float:
@@ -113,4 +115,4 @@ def simulate(bars: list[dict], published_ms: int, cfg: dict, slot_usd: float, fe
     return SimResult(True, ref, entry_t, round(limit, 6), pos.fills[-1].t_ms, round(pnl, 4),
                      round(100 * pnl / pos.cost, 4) if pos.cost else 0.0,
                      round(100 * (hi / limit - 1), 4), round(100 * (lo / limit - 1), 4),
-                     "|".join(reasons), pnl > 0)
+                     "|".join(reasons), pnl > 0, entry_rise_pct=round(100 * (entry_px / ref - 1), 4))

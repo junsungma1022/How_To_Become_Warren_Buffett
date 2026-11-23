@@ -25,7 +25,7 @@ def test_ledger_header_mismatch_refuses(tmp_path):
 
 def test_daily_summary_window_and_render():
     w = window_ending(dt.date(2026, 11, 20))
-    assert w.label.startswith("11-19 09:00")
+    assert w.label.startswith("11-19 10:00") and w.label.endswith("11-20 10:00 KST")
     inside, outside = "2026-11-19T15:00:00.000Z", "2026-11-18T15:00:00.000Z"
     arts = [{"received_utc": inside, "universe_ok": "true", "jev_pass": "true", "claude_called": "true",
              "claude_decision": "BUY", "action": "buy", "ai_cost_usd": "0.01"},
@@ -38,6 +38,7 @@ def test_daily_summary_window_and_render():
     assert abs(s["realized"] - 1.5) < 1e-9
     txt = render(s, "live", {"cash": 90.0, "holdings": 11.5}, 100.0)
     assert "$+1.50" in txt and "합계 **$101.50**" in txt and "승률 50%" in txt
+    assert "지금(10:00) 리셋" in txt
 
 
 def test_article_cols_are_unique():
