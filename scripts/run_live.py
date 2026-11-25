@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """매매 엔진 실행.
 
-    python scripts/run_live.py --mode shadow     # 주문 없이 전 과정 점검 (기본)
+    python scripts/run_live.py --mode paper      # 가상 계좌 $1000 (주문 없음 · 기본 · 예전 이름 shadow)
     python scripts/run_live.py --mode live       # 실제 주문 — settings.yaml 의 mode.live_enabled: true 도 필요
 
 맥에서 돌린다 (토스 허용 IP = 이 맥의 공인 IP).
@@ -56,7 +56,7 @@ async def main(mode: str, quiet: bool) -> int:
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--mode", choices=["shadow", "live"], default="shadow")
+    ap.add_argument("--mode", choices=["paper", "shadow", "live"], default="paper")
     ap.add_argument("--quiet", action="store_true", help="화면에 이벤트를 찍지 않는다 (launchd 용 · 기록 파일에는 남는다)")
     ap.add_argument("--no-delay", action="store_true", help="live 시작 전 10초 대기 생략 (launchd 용)")
     args = ap.parse_args()

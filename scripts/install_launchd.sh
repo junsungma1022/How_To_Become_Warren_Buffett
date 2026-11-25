@@ -2,7 +2,7 @@
 # 맥 launchd 로 24/7 무인 운영을 설치한다. 맥 시계 = KST 기준.
 #
 #   bash scripts/install_launchd.sh                  # 10:00 일일 보고서 + 10분마다 감시 (엔진은 손으로 켤 때)
-#   bash scripts/install_launchd.sh --engine shadow  # + 엔진 상시 실행 (주문 없음)
+#   bash scripts/install_launchd.sh --engine paper   # + 엔진 상시 실행 (가상 계좌 · 주문 없음)
 #   bash scripts/install_launchd.sh --engine live    # + 엔진 상시 실행 (실제 주문 · settings.yaml live_enabled: true 필요)
 #   bash scripts/install_launchd.sh --stop-engine    # 엔진만 내린다 (보고서 · 감시는 그대로)
 #   bash scripts/install_launchd.sh --status         # 지금 상태
@@ -78,7 +78,8 @@ echo "설치: 일일 보고서 (매일 ${REPORT_HOUR}:00 KST) · 감시 (10분�
 
 if [[ "${1:-}" == "--engine" ]]; then
   MODE="${2:-}"
-  [[ "${MODE}" == "shadow" || "${MODE}" == "live" ]] || { echo "--engine shadow 또는 --engine live"; exit 1; }
+  [[ "${MODE}" == "shadow" ]] && MODE=paper
+  [[ "${MODE}" == "paper" || "${MODE}" == "live" ]] || { echo "--engine paper 또는 --engine live"; exit 1; }
   plist "${L_ENGINE}" "  <key>ProgramArguments</key>
   <array><string>${PY}</string><string>${REPO}/scripts/run_live.py</string><string>--mode</string><string>${MODE}</string><string>--quiet</string><string>--no-delay</string></array>
   <key>RunAtLoad</key><true/>

@@ -2,7 +2,8 @@
 
 - LiveExecutor  : 토스 지정가 주문 (장외에서는 지정가만 받으므로 늘 지정가). 매수는 시간 안에 못 채운 잔량을 취소,
                   매도는 가격을 고쳐 다시 내기를 reprice_max 번까지 하고, 그래도 남으면 critical 알림.
-- ShadowExecutor: 주문을 보내지 않는다. 지금 호가에 바로 체결됐다고 기록만 한다 (shadow 모드 점검용).
+- ShadowExecutor (= paper): 주문을 보내지 않는다. 매수는 매도호가 ≤ 지정가일 때 매도호가에, 매도는 매수호가에
+  바로 전량 체결됐다고 친다 (paper 모드 가상 계좌 · 실제보다 낙관적 — 물량 · 미끄러짐 없음).
 
 반환값은 이 주문 묶음 전체의 체결 요약 하나(`Fill`) — 체결이 없으면 None.
 """
@@ -122,7 +123,7 @@ class LiveExecutor:
 class ShadowExecutor:
     """주문 없음. 지금 호가에 바로 체결됐다고 가정해 기록만 한다."""
 
-    mode = "shadow"
+    mode = "paper"
 
     def __init__(self, cfg: dict, log: LogFn, fee_rate: float, quote_fn: Callable[[str], Awaitable[Quote]]):
         self.cfg, self.log, self.fee_rate, self.quote_fn = cfg, log, fee_rate, quote_fn

@@ -2,12 +2,14 @@
 # 숫자를 바꾸면 docs/DECISIONS.md 에 이유를 한 줄 남긴다.
 
 mode:
-  # shadow: 모든 단계를 실제처럼 돌리되 주문만 보내지 않는다 (기록 · 알림은 남긴다)
+  # paper : 모든 단계를 실제처럼 돌리되 주문만 보내지 않는다 (가상 계좌 · 기록 · 알림은 남긴다 · 예전 이름 shadow)
   # live  : 실제 주문. run_live.py 는 --mode live 와 아래 live_enabled: true 가 **둘 다** 있어야 주문한다
   live_enabled: false
 
 capital:
-  budget_usd: 100.0            # 이 프로그램이 쓸 최대 금액. 토스 USD 매수가능금액과 둘 중 작은 값
+  budget_usd: 100.0            # live: 이 프로그램이 쓸 최대 금액. 토스 USD 매수가능금액과 둘 중 작은 값
+  paper_start_usd: 1000.0      # paper 가상 계좌 시작 금액 (사용자 2026-11-25 · D-16). 손익이 쌓여 다음 날 · 재시작에도 이어진다
+                               #   (현금 = 시작 금액 + 지금까지 paper 실현손익 − 보유 중 원가 · data/ledger/trades.csv 에서 계산)
   slots: 3                     # 3칸 (사용자 2026-11-19): 칸 하나 = 자금의 1/3 로 한 종목 · 3칸 모두 보유 중이면 매수 안 함
                                # 이전 프로그램의 '다음 영업일까지 칸 잠금'은 쓰지 않는다 (토스는 해당 없음 · 사용자)
   # 토스 Open API 주문은 자동 환전하지 않는다 (FAQ) → 미리 앱에서 달러로 바꿔 둔다
@@ -65,7 +67,7 @@ exit:                          # 매도 = 이전 프로그램 position_monitor �
 risk:                          # 안전장치 — 금액이 아니라 % 기준 (사용자 2026-11-19 · 이전 risk_manager: 3연패 · 일 −10%)
   daily_loss_limit_pct: 10.0   # 그날(KST 10:00 시작 · report.daily_time_kst) 시작 자산 대비 실현손실 −10% → 그날 신규 매수 중단
   max_consecutive_losses: 3    # 3연패 → 그날 신규 매수 중단
-  max_drawdown_pct: 40.0       # 시작 자금(capital.budget_usd) 대비 자산 −40% → 시스템 정지 (사람이 풀 때까지)
+  max_drawdown_pct: 40.0       # 시작 자금(live budget_usd · paper paper_start_usd) 대비 자산 −40% → 시스템 정지 (사람이 풀 때까지)
   one_trade_per_ticker_per_day: true   # 같은 종목은 미국 날짜 하루에 한 번만 (이전 프로그램)
 
 reconcile:                     # 시작 점검 (D-14): 기록에 없는 미국 주식 보유 · 모르는 미체결 주문 → 신규 매수 멈춤 + #critical

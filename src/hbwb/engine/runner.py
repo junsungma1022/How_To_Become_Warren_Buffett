@@ -18,7 +18,7 @@ from ..ai import jev as jev_mod
 from ..ai.openrouter import OpenRouter, OpenRouterError
 from ..broker.toss import TossClient, TossError, raw_after_end, toss_after_end
 from ..clock import ET, KST, fmt_et, fmt_kst, iso_utc, ms_to, now_ms, parse_iso_ms
-from ..config import ROOT, Secrets, day_hour
+from ..config import ROOT, Secrets, day_hour, mode_cfg, normalize_mode
 from ..eventlog import EventLog, read_events
 from ..ledger import articles as articles_ledger
 from ..ledger import trades as trades_ledger
@@ -55,10 +55,12 @@ def us_day(ms: int) -> str:
 
 class Engine:
     def __init__(self, cfg: dict, secrets: Secrets, mode: str):
-        if mode not in {"shadow", "live"}:
+        mode = normalize_mode(mode)                # 'shadow' = 예전 이름
+        if mode not in {"paper", "live"}:
             raise ValueError(mode)
         if mode == "live" and not cfg["mode"]["live_enabled"]:
             raise SystemExit("live 모드는 settings.yaml 의 mode.live_enabled: true 도 필요하다 (이중 확인)")
+        cfg = mode_cfg(cfg, mode)                  # paper: 예산 = capital.paper_start_usd ($1000 · D-16)
         self.cfg, self.secrets, self.mode = cfg, secrets, mode
         self.data_dir = ROOT / cfg["paths"]["data_dir"]
         self.ev = EventLog(ROOT / cfg["paths"]["log_dir"], secrets.all_values())
@@ -77,7 +79,8 @@ class Engine:
         self.fee_rate = cfg["fees"]["commission_rate_default"]
         self.seen: set[str] = set()
         self.last_alert_ms = now_ms()
-        self.shadow_realized = 0.0
+        self.paper_realized = 0.0
+        self.paper_snapshot: tuple[float, float] | None = None
         self._entry_lock = asyncio.Lock()
         self._sem = asyncio.Semaphore(6)
         self._stop = asyncio.Event()
@@ -107,13 +110,17 @@ class Engine:
 
     # ── 시작 점검 ────────────────────────────────────────────────────────────
     async def preflight(self) -> None:
-        bp = await self.toss.buying_power_usd() if self.mode == "live" else float(self.cfg["capital"]["budget_usd"])
+        if self.mode == "paper":
+            # 가상 계좌는 이어진다: 지금까지 paper 실현손익을 먼저 복원해야 현금 · 칸 금액 · 하루 시작 자산이 맞다
+            self.paper_realized = sum(float(r.get("pnl_usd") or 0) for r in self.trades.rows()
+                                      if r.get("mode") in {"paper", "shadow"})
+        bp = await self.toss.buying_power_usd() if self.mode == "live" else None
         if self.mode == "live":
             rate = await self.toss.commission_rate_us()
             if rate is not None:
                 self.fee_rate = rate
         await self.refresh_calendar()
-        self.ev.write("preflight", mode=self.mode, buying_power_usd=bp, fee_rate=self.fee_rate,
+        self.ev.write("preflight", mode=self.mode, buying_power_usd=bp, paper_realized=self.paper_realized, fee_rate=self.fee_rate,
                       sessions=[(n, fmt_kst(a), fmt_kst(b)) for n, a, b in self.windows])
         if self.mode == "live" and bp < 1:
             await self.notify("critical", f"🔴 토스 USD 매수가능금액 ${bp:.2f} — 앱에서 달러로 환전해 둘 것 (Open API 는 자동 환전 안 함)")
@@ -122,19 +129,22 @@ class Engine:
         await self.restore_state()
         if self.mode == "live":
             await self.reconcile_account()
-        _, eq = await self.equity()
+        cash, eq = await self.equity()
+        if bp is None:
+            bp = cash
+        self.paper_snapshot = (cash, eq) if self.mode == "paper" else None
         self.risk.roll_day(self.day_key_of(now_ms()), eq)
         # 재시작해도 안전장치가 풀리지 않게: 오늘 실현손익 · 연패 · 오늘 산 종목을 거래 기록에서 복원
         self.risk.rebuild(self.trades.rows(), self.day_key_of, us_day, parse_iso_ms,
                           [(sym, us_day(p.entry_ms)) for sym, p in self.positions.items() if p.entry_ms])
-        if self.mode == "shadow":
-            self.shadow_realized = sum(float(r.get("pnl_usd") or 0) for r in self.trades.rows() if r.get("mode") == "shadow")
         self.seen.update(r["article_id"] for r in self.articles.rows() if r.get("article_id"))
         self.ev.write("risk_restored", realized_today=self.risk.realized_today, consecutive_losses=self.risk.consecutive_losses,
                       traded_today=sorted(f"{a}@{b}" for a, b in self.risk.traded), seen=len(self.seen))
         c = self.cfg["capital"]
+        extra = (f" · 가상 계좌 시작 ${c['budget_usd']:.0f} · 누적 실현 ${self.paper_realized:+.2f} · 평가 합계 ${eq:.2f}"
+                 if self.mode == "paper" else "")
         await self.notify("warnings", f"▶️ 시작 ({self.mode}) · USD 현금 ${bp:.2f} · 수수료율 {self.fee_rate:.4%} · "
-                                      f"예산 ${c['budget_usd']:.0f} ÷ {c['slots']}칸")
+                                      f"예산 ${c['budget_usd']:.0f} ÷ {c['slots']}칸" + extra)
 
     async def refresh_calendar(self) -> None:
         cal = await self.toss.us_calendar()
@@ -248,7 +258,7 @@ class Engine:
         else:
             spent = sum(p.cost + sum(f.fee for f in p.fills if f.side == "BUY") for p in open_pos)
             received = sum(sum(f.qty * f.price - f.fee for f in p.fills if f.side == "SELL") for p in open_pos)
-            cash = float(self.cfg["capital"]["budget_usd"]) + self.shadow_realized - spent + received
+            cash = float(self.cfg["capital"]["budget_usd"]) + self.paper_realized - spent + received
         mv = 0.0
         if open_pos:
             px = await self.toss.last_prices([p.symbol for p in open_pos])
@@ -481,7 +491,7 @@ class Engine:
                "claude_grade": m.get("claude_grade"), "claude_confidence": m.get("claude_conf")}
         self.trades.append(row)
         self.risk.record_close(pnl)
-        self.shadow_realized += pnl
+        self.paper_realized += pnl
         self.ev.write("trade_closed", **row)
         await self.notify("exits", f"✅ **거래 종료** {sym} (칸 {pos.slot + 1}) · 손익 ${pnl:+.2f} ({row['ret_pct']:+.2f}%) · "
                                    f"{row['exit_reasons']} · 보유 {row['hold_min']:.1f}분")
@@ -542,6 +552,9 @@ class Engine:
         hb = {"t": now_ms(), "mode": self.mode, "started_ms": self.started_ms, "pid_note": "run_live",
               "positions": {s: p.qty for s, p in self.positions.items()}, "pending": sorted(self.pending),
               "last_alert_ms": self.last_alert_ms, "halted": self.risk.halted}
+        if self.mode == "paper" and self.paper_snapshot:
+            hb["paper"] = {"start_usd": float(self.cfg["capital"]["budget_usd"]), "realized_usd": round(self.paper_realized, 4),
+                           "cash_usd": round(self.paper_snapshot[0], 4), "equity_usd": round(self.paper_snapshot[1], 4)}
         tmp = self.heartbeat_path.with_suffix(".tmp")
         tmp.write_text(json.dumps(hb), encoding="utf-8")
         tmp.replace(self.heartbeat_path)
@@ -561,6 +574,11 @@ class Engine:
                 self.ev.write("housekeeping_error", err=str(e)[:200])
             if t - self._hb_ms >= HEARTBEAT_S * 1000:
                 self._hb_ms = t
+                if self.mode == "paper":
+                    try:
+                        self.paper_snapshot = await self.equity()     # 가상 계좌 현금 · 평가 (일일 보고서가 읽는다)
+                    except Exception as e:  # noqa: BLE001 - 시세 실패해도 heartbeat 는 남긴다
+                        self.ev.write("paper_equity_error", err=str(e)[:200])
                 self.write_heartbeat()
                 self.ev.write("heartbeat", positions=len(self.positions), pending=len(self.pending), bg_tasks=len(self._bg))
             if self.session_now() in {"pre", "regular", "after"} and t - self.last_alert_ms > 30 * 60_000:
