@@ -119,7 +119,7 @@ async def main(args) -> int:
     else:
         print(f"{SKIP} OpenRouter: 키가 아직 없다 — 건너뜀")
 
-    print(f"{OK if have['HBWB_RTPR_KEY'] else SKIP} RTPR 키 {'있음 (연결은 run_live --mode shadow 로 확인)' if have['HBWB_RTPR_KEY'] else '없음 — 건너뜀'}")
+    print(f"{OK if have['HBWB_RTPR_KEY'] else SKIP} RTPR 키 {'있음 (연결은 run_live --mode paper 로 확인)' if have['HBWB_RTPR_KEY'] else '없음 — 건너뜀'}")
 
     if args.discord:
         fails += await check_discord(sec)

@@ -94,7 +94,7 @@ def render(s: dict, mode: str, equity: dict | None, start_capital: float,
         lines.append(engine_line)
     if equity:
         tot = equity["cash"] + equity["holdings"]
-        lines.append(f"계좌(USD): 현금 ${equity['cash']:.2f} · 보유 평가 ${equity['holdings']:.2f} · 합계 **${tot:.2f}** "
+        lines.append(f"{'가상 계좌' if mode == 'paper' else '계좌'}(USD): 현금 ${equity['cash']:.2f} · 보유 평가 ${equity['holdings']:.2f} · 합계 **${tot:.2f}** "
                      f"(시작 ${start_capital:.0f} 대비 {tot - start_capital:+.2f}, {100 * (tot / start_capital - 1):+.1f}%)")
     n = len(s["trades"])
     rate = f"{100 * s['wins'] / n:.0f}%" if n else "-"

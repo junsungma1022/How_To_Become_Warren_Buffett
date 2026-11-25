@@ -63,13 +63,13 @@ brew install pre-commit gitleaks && pre-commit install
 
 .venv/bin/python -m pytest -q                   # 시험 (네트워크 안 씀)
 .venv/bin/python scripts/check_setup.py --discord   # 키 · 토스 계좌 · AI · Discord 점검 (주문 없음 · 키가 없는 건 건너뜀)
-.venv/bin/python scripts/run_live.py --mode shadow  # 손으로 한 번 (주문 없음 · Ctrl+C 로 끔)
+.venv/bin/python scripts/run_live.py --mode paper   # 손으로 한 번 (가상 계좌 $1000 · 주문 없음 · Ctrl+C 로 끔)
 ```
 
 ### 24/7 무인 운영
 
 ```bash
-bash scripts/install_launchd.sh --engine shadow   # 엔진 상시 실행(주문 없음) + 10:00 보고서 + 10분 감시 + 잠자기 방지
+bash scripts/install_launchd.sh --engine paper    # 엔진 상시 실행(가상 계좌 · 주문 없음) + 10:00 보고서 + 10분 감시 + 잠자기 방지
 # 실거래: settings.yaml 의 mode.live_enabled: true 로 바꾼 뒤
 bash scripts/install_launchd.sh --engine live
 bash scripts/install_launchd.sh --status          # 상태 · 마지막 종료 코드 · heartbeat

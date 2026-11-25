@@ -1,4 +1,4 @@
-"""엔진 한 바퀴 (shadow): 기사 → 종목 범위 → Jev → Claude → 5분 안 +5% 신호 → 칸 매수 → 사다리 매도 → 거래 기록."""
+"""엔진 한 바퀴 (paper): 기사 → 종목 범위 → Jev → Claude → 5분 안 +5% 신호 → 칸 매수 → 사다리 매도 → 거래 기록."""
 
 import asyncio
 
@@ -86,9 +86,10 @@ class FakeDiscord:
         pass
 
 
-def make_engine(tmp_path, cfg, ai=None):
+def make_engine(tmp_path, cfg, ai=None, start=100.0):
     cfg["entry"]["poll_interval_s"] = 0
-    eng = Engine(cfg, load_secrets(SECRETS), "shadow")
+    cfg["capital"]["paper_start_usd"] = start              # 기존 시험은 $100 기준으로 쓰였다 (paper 기본값은 $1000)
+    eng = Engine(cfg, load_secrets(SECRETS), "shadow")     # 'shadow' = paper 의 예전 이름 (호환 확인 겸)
     eng.data_dir = tmp_path
     eng.ev = EventLog(tmp_path / "logs", echo=False)
     eng.articles, eng.trades = articles(tmp_path), trades(tmp_path)

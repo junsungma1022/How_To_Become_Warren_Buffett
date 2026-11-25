@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import copy
+
 import os
 import re
 from dataclasses import dataclass, field
@@ -103,6 +105,21 @@ def load_settings(path: Path = SETTINGS_PATH) -> dict:
     return cfg
 
 
+def normalize_mode(mode: str) -> str:
+    """'shadow' 는 예전 이름 → 'paper'."""
+    return "paper" if mode == "shadow" else mode
+
+
+def mode_cfg(cfg: dict, mode: str) -> dict:
+    """모드에 맞는 설정. paper 면 capital.budget_usd 를 capital.paper_start_usd 로 바꾼 복사본을 돌려준다 —
+    칸 금액 · −40% 정지 기준 · 시작 알림이 모두 이 한 값을 쓴다 (D-16)."""
+    if normalize_mode(mode) != "paper":
+        return cfg
+    out = copy.deepcopy(cfg)
+    out["capital"]["budget_usd"] = float(cfg["capital"].get("paper_start_usd") or cfg["capital"]["budget_usd"])
+    return out
+
+
 def day_hour(cfg: dict) -> int:
     """하루 경계 시각 (KST 시) = 일일 보고서 시각."""
     return int(str(cfg["report"]["daily_time_kst"]).split(":")[0])
@@ -113,6 +130,8 @@ def _validate(cfg: dict) -> None:
     problems = []
     if c["budget_usd"] <= 0:
         problems.append("capital.budget_usd > 0")
+    if float(c.get("paper_start_usd", 1) or 0) <= 0:
+        problems.append("capital.paper_start_usd > 0")
     if int(c["slots"]) < 1:
         problems.append("capital.slots >= 1")
     if e["trigger_rise_pct"] <= 0 or e["trigger_window_min"] <= 0:

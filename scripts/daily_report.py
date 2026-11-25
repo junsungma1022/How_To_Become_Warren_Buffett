@@ -23,12 +23,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from hbwb.broker.toss import TossClient  # noqa: E402
 from hbwb.clock import KST, now_ms  # noqa: E402
-from hbwb.config import ROOT, day_hour, load_dotenv_file, load_secrets, load_settings, scrub  # noqa: E402
+from hbwb.config import ROOT, day_hour, load_dotenv_file, load_secrets, load_settings, mode_cfg, normalize_mode, scrub  # noqa: E402
 from hbwb.eventlog import EventLog, read_events  # noqa: E402
 from hbwb.notify.discord import Discord  # noqa: E402
 from hbwb.engine.runner import report_day_key  # noqa: E402
 from hbwb.report.daily import (cumulative, heartbeat_status, history, read_csv, render, render_history,  # noqa: E402
                                summarize, window_ending)
+
+
+def start_capital(cfg: dict, trades: list[dict], modes: set[str] | None = None) -> float:
+    """시작 자금: paper 기록뿐이면 capital.paper_start_usd ($1000), 아니면 live 예산 (D-16)."""
+    modes = modes or ({normalize_mode(t.get("mode") or "") for t in trades} - {""})
+    return float(mode_cfg(cfg, "paper" if modes == {"paper"} else "live")["capital"]["budget_usd"])
 
 
 async def account_equity(sec) -> dict | None:
@@ -53,7 +59,7 @@ async def main(args) -> int:
     w = window_ending(day, day_hour(cfg))
     all_trades = read_csv(data / "ledger" / "trades.csv")
     if args.history:
-        text = render_history(history(all_trades, partial(report_day_key, hour=day_hour(cfg))), cfg["capital"]["budget_usd"])
+        text = render_history(history(all_trades, partial(report_day_key, hour=day_hour(cfg))), start_capital(cfg, all_trades))
         print(text)
         if not args.dry_run:
             d = Discord(sec, EventLog(logs, sec.all_values(), echo=False).write, prefix="HBWB")
@@ -65,13 +71,20 @@ async def main(args) -> int:
     hb_path = data / "state" / "heartbeat.json"
     hb = json.loads(hb_path.read_text(encoding="utf-8")) if hb_path.exists() else None
     alive, engine_line = heartbeat_status(hb, now_ms())
-    modes = {t.get("mode") for t in s["trades"]} or {"live" if cfg["mode"]["live_enabled"] else "shadow"}
+    modes = {normalize_mode(t.get("mode") or "") for t in s["trades"]} - {""}
+    if not modes:
+        modes = {normalize_mode((hb or {}).get("mode") or ("live" if cfg["mode"]["live_enabled"] else "paper"))}
     equity = None
-    try:
-        equity = await account_equity(sec)
-    except Exception as e:  # noqa: BLE001 - 계좌 조회가 안 돼도 보고서는 보낸다
-        print("계좌 조회 실패:", scrub(e, sec.all_values()))
-    text = render(s, "/".join(sorted(m for m in modes if m)), equity, cfg["capital"]["budget_usd"],
+    if modes == {"paper"}:
+        p = (hb or {}).get("paper")           # 엔진이 5분마다 남기는 가상 계좌 (현금 · 평가)
+        if p:
+            equity = {"cash": float(p["cash_usd"]), "holdings": float(p["equity_usd"]) - float(p["cash_usd"])}
+    else:
+        try:
+            equity = await account_equity(sec)
+        except Exception as e:  # noqa: BLE001 - 계좌 조회가 안 돼도 보고서는 보낸다
+            print("계좌 조회 실패:", scrub(e, sec.all_values()))
+    text = render(s, "/".join(sorted(modes)), equity, start_capital(cfg, all_trades, modes),
                   cumulative(all_trades), engine_line)
     print(text)
     if args.dry_run:
