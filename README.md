@@ -66,6 +66,18 @@ brew install pre-commit gitleaks && pre-commit install
 .venv/bin/python scripts/run_live.py --mode paper   # 손으로 한 번 (가상 계좌 $1000 · 주문 없음 · Ctrl+C 로 끔)
 ```
 
+### 한 줄 명령 · 대시보드
+
+```bash
+echo "alias hbwb='bash $HOME/Projects/How_To_Become_Warren_Buffett/scripts/hbwb.sh'" >> ~/.zshrc && source ~/.zshrc   # 한 번만
+hbwb start | stop | restart | status   # 엔진 (paper · 24/7)
+hbwb dash                              # 대시보드 http://127.0.0.1:8765 (가상 계좌 · 오늘 깔때기 · 보유 · 기사 · 거래 · AI 비용)
+hbwb watch                             # 터미널에서 실시간 한 줄씩
+hbwb report | history | check | errors
+```
+
+대시보드는 이 맥에서만 열리고(127.0.0.1) 파일을 읽기만 한다. 주문 · 설정을 바꾸는 기능은 없다.
+
 ### 24/7 무인 운영
 
 ```bash
