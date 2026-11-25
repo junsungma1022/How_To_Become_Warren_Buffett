@@ -31,6 +31,11 @@ from hbwb.report.daily import (cumulative, heartbeat_status, history, read_csv, 
                                summarize, window_ending)
 
 
+def current_window_day(now_kst: dt.datetime, hour: int) -> dt.date:
+    """지금이 속한 보고 하루가 끝나는 날 (10:00 이후면 내일 · 전이면 오늘)."""
+    return now_kst.date() + dt.timedelta(days=1) if now_kst.hour >= hour else now_kst.date()
+
+
 def start_capital(cfg: dict, trades: list[dict], modes: set[str] | None = None) -> float:
     """시작 자금: paper 기록뿐이면 capital.paper_start_usd ($1000), 아니면 live 예산 (D-16)."""
     modes = modes or ({normalize_mode(t.get("mode") or "") for t in trades} - {""})
@@ -55,7 +60,9 @@ async def main(args) -> int:
     load_dotenv_file()
     cfg, sec = load_settings(), load_secrets()
     data, logs = ROOT / cfg["paths"]["data_dir"], ROOT / cfg["paths"]["log_dir"]
-    day = dt.date.fromisoformat(args.date) if args.date else dt.datetime.now(KST).date()
+    day = (dt.date.fromisoformat(args.date) if args.date
+           else current_window_day(dt.datetime.now(KST), day_hour(cfg)) if args.current
+           else dt.datetime.now(KST).date())
     w = window_ending(day, day_hour(cfg))
     all_trades = read_csv(data / "ledger" / "trades.csv")
     if args.history:
@@ -103,5 +110,6 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--date")
+    ap.add_argument("--current", action="store_true", help="지금 진행 중인 하루 (10:00 부터 지금까지)")
     ap.add_argument("--history", action="store_true")
     sys.exit(asyncio.run(main(ap.parse_args())))

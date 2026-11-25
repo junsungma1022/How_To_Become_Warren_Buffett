@@ -81,6 +81,7 @@ class Engine:
         self.last_alert_ms = now_ms()
         self.paper_realized = 0.0
         self.paper_snapshot: tuple[float, float] | None = None
+        self.marks: dict[str, float] = {}
         self._entry_lock = asyncio.Lock()
         self._sem = asyncio.Semaphore(6)
         self._stop = asyncio.Event()
@@ -262,6 +263,7 @@ class Engine:
         mv = 0.0
         if open_pos:
             px = await self.toss.last_prices([p.symbol for p in open_pos])
+            self.marks = {s: v for s, v in px.items() if v}           # 대시보드용 마지막 가격
             mv = sum((px.get(p.symbol) or p.avg_price or 0) * p.qty for p in open_pos)
         return cash, cash + mv
 
@@ -551,7 +553,8 @@ class Engine:
         self.heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
         hb = {"t": now_ms(), "mode": self.mode, "started_ms": self.started_ms, "pid_note": "run_live",
               "positions": {s: p.qty for s, p in self.positions.items()}, "pending": sorted(self.pending),
-              "last_alert_ms": self.last_alert_ms, "halted": self.risk.halted}
+              "last_alert_ms": self.last_alert_ms, "halted": self.risk.halted,
+              "marks": {s: v for s, v in self.marks.items() if s in self.positions}}
         if self.mode == "paper" and self.paper_snapshot:
             hb["paper"] = {"start_usd": float(self.cfg["capital"]["budget_usd"]), "realized_usd": round(self.paper_realized, 4),
                            "cash_usd": round(self.paper_snapshot[0], 4), "equity_usd": round(self.paper_snapshot[1], 4)}
