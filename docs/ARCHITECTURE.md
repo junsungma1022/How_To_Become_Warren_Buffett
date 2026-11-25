@@ -56,16 +56,16 @@ flowchart LR
 
 | 모드 | 주문 | 용도 |
 |---|---|---|
-| `shadow` (기본) | 보내지 않음 — 지금 호가에 체결됐다고 기록 | 키 · 연결 · 판단 흐름 점검 |
+| `paper` (기본 · 예전 이름 `shadow`) | 보내지 않음 — 매도호가 ≤ 지정가면 매도호가에, 매도는 매수호가에 전량 체결됐다고 기록 | 가상 계좌 $1000 (`capital.paper_start_usd` · D-16). 현금 = 시작 + paper 실현손익 누적 − 보유 원가 → 다음 날 · 재시작에도 이어짐 |
 | `live` | 토스 지정가 주문 | `--mode live` **그리고** `settings.yaml` 의 `mode.live_enabled: true` 둘 다 있어야 한다 |
 
-shadow 모드의 토스 클라이언트는 `allow_orders=False` 로 만들어 주문 함수가 예외를 던진다 (코드 버그가 있어도 주문이 나갈 길이 없다).
+paper 모드의 토스 클라이언트는 `allow_orders=False` 로 만들어 주문 함수가 예외를 던진다 (코드 버그가 있어도 주문이 나갈 길이 없다).
 
 ## 4. 24/7 무인 운영 (`scripts/install_launchd.sh`)
 
 | launchd 작업 | 하는 일 | 다시 켜기 |
 |---|---|---|
-| `com.hbwb.engine` | `run_live.py --mode shadow|live --quiet` | 로그인 때 시작 · 오류로 죽으면(종료 코드 1) 60초 뒤 다시. 키 · 구독 · 허용 IP 문제(종료 코드 0)는 다시 켜지 않는다 |
+| `com.hbwb.engine` | `run_live.py --mode paper|live --quiet` | 로그인 때 시작 · 오류로 죽으면(종료 코드 1) 60초 뒤 다시. 키 · 구독 · 허용 IP 문제(종료 코드 0)는 다시 켜지 않는다 |
 | `com.hbwb.awake` | `caffeinate -i -s` — 전원 연결 중 잠자기 방지 | 항상 |
 | `com.hbwb.daily-report` | 매일 10:00 KST 일일 보고서 → #daily_summary (엔진이 멈춰 있으면 #critical 도) | 매일 |
 | `com.hbwb.watchdog` | 10분마다 heartbeat 확인 → 15분 넘게 신호가 없으면 #critical (60분에 한 번) · 살아나면 알림 | 10분마다 |
