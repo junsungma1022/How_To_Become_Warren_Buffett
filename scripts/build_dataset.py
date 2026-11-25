@@ -9,7 +9,7 @@
     python scripts/build_dataset.py --estimate
     # 1) Jev (아주 쌈) → 2) Claude (비쌈 · --claude-max 로 상한) → 3) CSV
     python scripts/build_dataset.py --stage jev
-    python scripts/build_dataset.py --stage claude --claude-max 300
+    python scripts/build_dataset.py --stage claude --claude-max 50     # 사용자: $5 크레딧 안에서 50건
     python scripts/build_dataset.py --stage build
 
 정답 라벨 (사용자 승인 2026-11-18):
@@ -339,7 +339,7 @@ if __name__ == "__main__":
     ap.add_argument("--since")
     ap.add_argument("--until")
     ap.add_argument("--limit", type=int)
-    ap.add_argument("--claude-max", type=int, default=300)
+    ap.add_argument("--claude-max", type=int, default=50)   # 사용자 2026-11-25: OpenRouter $5 안에서 50건 (D-18)
     a = ap.parse_args()
     if not a.stage and not a.estimate:
         ap.error("--stage 또는 --estimate")

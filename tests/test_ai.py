@@ -41,7 +41,7 @@ def test_brief_prompt_has_no_report():
     assert "report_ko" in C.SYSTEM and "report_ko" not in C.SYSTEM_BRIEF
 
 
-def test_openrouter_decide_and_chat_requests():
+def test_openrouter_decide_and_chat_requests(cfg):
     seen = []
 
     def h(req):
@@ -63,8 +63,8 @@ def test_openrouter_decide_and_chat_requests():
                     sleep=_nosleep)
     jr = asyncio.run(J.classify(ai, "typesafe/jev-1.13", J.build_state("ABCD", "t", "b", 1e7, 100)))
     assert jr.choice == "big_positive" and jr.usage.cost_usd == 0.00001
-    cfg = {"claude": {"model": "anthropic/claude-opus-5.5", "reasoning_effort": "low", "max_tokens": 100, "timeout_s": 5},
-           "news": {"body_max_chars": 100}}
+    cfg["claude"].update(max_tokens=100, timeout_s=5)
+    cfg["news"]["body_max_chars"] = 100
     cr = asyncio.run(C.judge(ai, cfg, "ABCD", "t", "b", {}, with_report=False))
     assert cr.decision == "PASS" and abs(cr.usage.cost_usd - 0.003) < 1e-12
     assert all(r.headers["Authorization"].startswith("Bearer sk-or-v1-") for r in seen)
@@ -99,3 +99,14 @@ def test_discord_retries_on_429():
     sec = load_secrets({"HBWB_DISCORD_WEBHOOK_WARNINGS": "https://discord.com/api/webhooks/1/abc"})
     d = Discord(sec, lambda *a, **k: {}, http=httpx.AsyncClient(transport=httpx.MockTransport(h)), sleep=_nosleep)
     assert asyncio.run(d.send("warnings", "hi")) is True and n["k"] == 2
+
+
+def test_claude_prompt_matches_real_rules(cfg):
+    """D-18: 프롬프트가 실제 매수 · 매도 규칙(settings.yaml)을 설명한다 — 예전 '30분 · +10/+20% · −5%' 가 아니다."""
+    sp = C.system_prompt(cfg)
+    assert "{RULES}" not in sp and "+5% to +10%" in sp and "stop-loss -7%" in sp
+    assert "+5%, +10%, +15%" in sp and "5% below the peak" in sp and "below +2% after 5 minutes" in sp
+    assert "30 minutes" not in sp and "-5%)" not in sp
+    assert "BUY 일 때만" in sp and "report_ko" not in C.system_prompt(cfg, with_report=False)
+    cfg["entry"]["trigger_max_rise_pct"] = 12.0                      # KNIME 으로 상한을 바꾸면 프롬프트도 따라간다
+    assert "+5% to +12%" in C.system_prompt(cfg)

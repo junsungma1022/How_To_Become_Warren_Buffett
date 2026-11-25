@@ -95,3 +95,9 @@
 - `scripts/watch.py`: 이벤트 로그를 한국어 한 줄로 · 날짜가 바뀌면 새 파일로 넘어감. `scripts/hbwb.sh`: start · stop · restart · status · dash · watch · report(`daily_report --current`) · history · check · errors
 - 엔진 heartbeat 에 `marks`(보유 종목 마지막 가격) 추가 · 기록 코드 → 한국어는 `report/labels.py` 한 곳
 - 평가표 [4] UI 근거
+
+## D-18 · 2026-11-25 — Claude 프롬프트를 실제 규칙으로 · 리포트는 BUY 때만 · 데이터셋 Claude 50건 (사용자 승인 "A, B 승인 · C 는 50건")
+- 고침 (버그): Claude 프롬프트가 예전 D-4 규칙(최대 30분 · 익절 +10/+20% · 손절 −5%)을 설명하고 있었다 → D-9 · D-15 의 실제 규칙을 `settings.yaml` 숫자로 만들어 넣는다 (`rules_text` · 상한 · 매도 규칙을 바꾸면 프롬프트도 따라간다)
+- 비용: `report_ko` 는 BUY 일 때만 쓰고 PASS 면 비운다 (대부분 PASS → 출력 토큰 절감 · 얼마나 줄었는지는 실측으로 본다). BUY 인데 비어 있으면 #entries 에 핵심 사실을 대신 넣는다
+- KNIME 데이터셋 Claude 단계 기본 상한 300 → 50 (사용자 · OpenRouter $5 크레딧 · 12/1 까지)
+- 추정 (실측 전): Claude 한 번 ≈ $0.02 ~ 0.04 (Opus 5.5 $4 / $20 per M · 입력 약 2,000 ~ 2,500 · 출력 약 700 ~ 1,500 토큰) · Jev ≈ $0.0001
