@@ -438,7 +438,7 @@ class Engine:
                               f"🟢 **매수** {sym} {fill.qty}주 @ ${fill.price:.4g} · 칸 {slot + 1}/{self.cfg['capital']['slots']} "
                               f"(${su:.0f}) · 시총 {mcap}\n신호: 발행 뒤 {(t - pub) / 60000:.1f}분 · 기준가 대비 "
                               f"{row['signal_rise_pct']:+.1f}%\n> {title[:200]}\nJev: {self.meta[sym]['jev']} · Claude: "
-                              f"{cr.impact_grade}/5 (확신 {cr.confidence}) · {cr.catalyst_type}\n**매수 근거 리포트**\n{cr.report_ko}")
+                              f"{cr.impact_grade}/5 (확신 {cr.confidence}) · {cr.catalyst_type}\n**매수 근거 리포트**\n{cr.report_ko or ' · '.join(map(str, cr.key_facts))}")
             return "filled"
         finally:
             self.pending.pop(sym, None)

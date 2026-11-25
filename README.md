@@ -103,7 +103,7 @@ bash scripts/install_launchd.sh --stop-engine     # 엔진만 내림
 .venv/bin/python scripts/build_dataset.py --stage prices   # 토스 1분봉 · 일봉 · 종목정보
 .venv/bin/python scripts/build_dataset.py --estimate       # AI 비용 추정
 .venv/bin/python scripts/build_dataset.py --stage jev
-.venv/bin/python scripts/build_dataset.py --stage claude --claude-max 300
+.venv/bin/python scripts/build_dataset.py --stage claude --claude-max 50
 .venv/bin/python scripts/build_dataset.py --stage build    # → data/knime/news_dataset.csv
 ```
 

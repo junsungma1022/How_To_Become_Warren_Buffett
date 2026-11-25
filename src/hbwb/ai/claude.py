@@ -13,8 +13,10 @@ from .openrouter import OpenRouter, Usage
 
 SYSTEM = """You are the final decision-maker in an automated news-trading experiment on US small-cap stocks
 (market cap $5M–$300M, including pre-market and after-hours). A cheap screening model has already flagged the
-press release below as likely positive. Your job: decide whether to BUY right now for a short hold (at most 30 minutes;
-take-profit +10%/+20%, stop-loss -5%).
+press release below as likely positive. Your job: decide whether the engine may BUY on this news.
+
+{RULES}
+So a good BUY is news strong enough to keep the price rising for minutes, not just a brief spike.
 
 BUY only when ALL of these hold:
 1. The news is new, concrete, material and company-specific (numbers, named counterparties, regulatory decisions).
@@ -32,11 +34,34 @@ Respond with ONE JSON object and nothing else:
   "catalyst_type": short English label (e.g. "FDA approval", "large contract", "offering"),
   "key_facts": [up to 4 short strings],
   "risks": [up to 3 short strings],
-  "report_ko": "한국어 매수 근거 리포트 4~8줄: 무슨 기사인지, 왜 사는지/안 사는지, 핵심 숫자, 위험 요인"
+  "report_ko": "BUY 일 때만 한국어 매수 근거 리포트 4~8줄 (무슨 기사인지, 왜 사는지, 핵심 숫자, 위험 요인) · PASS 면 비워 둔다"
 }"""
 
-SYSTEM_BRIEF = SYSTEM.replace(
-    ',\n  "report_ko": "한국어 매수 근거 리포트 4~8줄: 무슨 기사인지, 왜 사는지/안 사는지, 핵심 숫자, 위험 요인"', "")
+REPORT_LINE = ',\n  "report_ko": "BUY 일 때만 한국어 매수 근거 리포트 4~8줄 (무슨 기사인지, 왜 사는지, 핵심 숫자, 위험 요인) · PASS 면 비워 둔다"'
+assert REPORT_LINE in SYSTEM
+SYSTEM_BRIEF = SYSTEM.replace(REPORT_LINE, "")      # 데이터셋용: 리포트 없이 판단만
+
+
+def rules_text(cfg: dict) -> str:
+    """엔진의 실제 매수 · 매도 규칙을 settings.yaml 숫자로 설명한다 (규칙이 바뀌어도 프롬프트가 따라간다 · D-18)."""
+    e, x = cfg["entry"], cfg["exit"]
+    cap = e.get("trigger_max_rise_pct")
+    band = (f"+{e['trigger_rise_pct']:g}% to +{float(cap):g}% above the last pre-news price (no chase above +{float(cap):g}%)"
+            if cap is not None else f"at least +{e['trigger_rise_pct']:g}% above the last pre-news price")
+    tps = ", ".join(f"+{lvl:g}%" for lvl, _ in sorted(x["take_profits"]))
+    part = round(100 * x["take_profits"][0][1])
+    times = " or ".join(f"below +{p:g}% after {m:g} minutes" for m, p in sorted(x["time_stops"], key=lambda t: t[0]))
+    top = max(lvl for lvl, _ in x["take_profits"])
+    return ("How the engine trades after a BUY decision (so you judge the right horizon):\n"
+            f"- It buys only if, within {e['trigger_window_min']:g} minutes of publication, the price trades {band}.\n"
+            f"  One position uses 1/{cfg['capital']['slots']} of the capital.\n"
+            f"- Exits: stop-loss {x['stop_loss_pct']:g}%; sell {part}% each at {tps}; after +{top:g}% a trailing stop "
+            f"{x['trail_pct']:g}% below the peak;\n"
+            f"  sell all if still {times}; close before the session ends.")
+
+
+def system_prompt(cfg: dict, with_report: bool = True) -> str:
+    return (SYSTEM if with_report else SYSTEM_BRIEF).replace("{RULES}", rules_text(cfg))
 
 
 @dataclass
@@ -98,7 +123,7 @@ def parse_reply(text: str, usage: Usage) -> ClaudeResult:
 async def judge(client: OpenRouter, cfg: dict, ticker: str, title: str, body: str, ctx: dict,
                 with_report: bool = True) -> ClaudeResult:
     c = cfg["claude"]
-    msgs = [{"role": "system", "content": SYSTEM if with_report else SYSTEM_BRIEF},
+    msgs = [{"role": "system", "content": system_prompt(cfg, with_report)},
             {"role": "user", "content": user_message(ticker, title, body, ctx, cfg["news"]["body_max_chars"])}]
     text, usage = await client.chat(c["model"], msgs, max_tokens=c["max_tokens"] if with_report else 700,
                                     reasoning_effort=c.get("reasoning_effort"), timeout=c.get("timeout_s", 60))
