@@ -54,7 +54,7 @@ def test_openrouter_decide_and_chat_requests(cfg):
                                                                     "probabilities": {"big_positive": 1.0}, "confidence": 0.9}},
                                              "usage": {"input_tokens": 100, "output_tokens": 0, "cost": 0.00001}})
         if req.url.path == "/api/v1/chat/completions":
-            assert body["model"] == "anthropic/claude-opus-5.5" and body["reasoning"] == {"effort": "low"}
+            assert body["model"] == cfg["claude"]["model"] and body["reasoning"] == {"effort": "low"}
             return httpx.Response(200, json={"choices": [{"message": {"content": '{"decision":"PASS","impact_grade":3,"confidence":0.6}'}}],
                                              "usage": {"prompt_tokens": 500, "completion_tokens": 50, "cost": 0.003}})
         return httpx.Response(404)
@@ -110,3 +110,6 @@ def test_claude_prompt_matches_real_rules(cfg):
     assert "BUY 일 때만" in sp and "report_ko" not in C.system_prompt(cfg, with_report=False)
     cfg["entry"]["trigger_max_rise_pct"] = 12.0                      # KNIME 으로 상한을 바꾸면 프롬프트도 따라간다
     assert "+5% to +12%" in C.system_prompt(cfg)
+    assert "{UNIVERSE}" not in sp and "any size" in sp                # D-19: 시총 제한 없음
+    cfg["universe"].update(min_market_cap_usd=5_000_000, max_market_cap_usd=300_000_000)
+    assert "market cap $5M–$300M" in C.system_prompt(cfg)

@@ -44,8 +44,8 @@ from hbwb.universe import judge, prev_close_from_daily  # noqa: E402
 DEFAULT_BODIES = ROOT.parent / "Auto_Trader_Futures" / "data" / "news" / "pilot" / "rtpr_history" / "bodies.jsonl"
 US_EXCH = {"NASDAQ", "NYSE", "NYSE AMERICAN", "AMEX", "NYSEAMERICAN", "NYSE ARCA"}
 
-# 비용 추정 (OpenRouter 가격 · 2026-11-18 확인): Jev 입력 $0.042/M · 출력 무료, Opus 5.5 입력 $4/M · 출력 $20/M
-JEV_IN_PER_M, OPUS_IN_PER_M, OPUS_OUT_PER_M = 0.042, 4.0, 20.0
+# 비용 추정 (OpenRouter 가격 확인): Jev 입력 $0.042/M · 출력 무료 · Claude Sonnet 5.5 입력 $2/M · 출력 $10/M (2026-11-26 · D-19)
+JEV_IN_PER_M, OPUS_IN_PER_M, OPUS_OUT_PER_M = 0.042, 2.0, 10.0
 
 
 def session_of(ms: int) -> str:
@@ -292,7 +292,7 @@ def estimate(arts, cfg, stores):
     cl_cost = sum((tok(a) + 900) / 1e6 * OPUS_IN_PER_M + 350 / 1e6 * OPUS_OUT_PER_M for a in pending)
     print(f"기사 {len(arts)} · 종목범위 통과 {len(uni)} (시세 받은 것 기준) · Jev 완료 {sum(a['k'] in stores['jev'].d for a in uni)}")
     print(f"Jev 남은 비용 ≈ ${jev_cost:.2f}")
-    print(f"Jev 통과 {len(passed)} · Claude 남은 {len(pending)}건 ≈ ${cl_cost:.2f} (Opus 5.5 · 추정)")
+    print(f"Jev 통과 {len(passed)} · Claude 남은 {len(pending)}건 ≈ ${cl_cost:.2f} (Claude · 추정)")
 
 
 async def main(args) -> int:

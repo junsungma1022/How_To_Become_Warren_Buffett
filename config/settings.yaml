@@ -14,9 +14,11 @@ capital:
                                # 이전 프로그램의 '다음 영업일까지 칸 잠금'은 쓰지 않는다 (토스는 해당 없음 · 사용자)
   # 토스 Open API 주문은 자동 환전하지 않는다 (FAQ) → 미리 앱에서 달러로 바꿔 둔다
 
-universe:                      # 종목 범위 (사용자 결정 2026-11-18: 이전 U1 의 시가총액 기준만 · 거래량 조건 뺌)
-  min_market_cap_usd: 5_000_000
-  max_market_cap_usd: 300_000_000
+universe:                      # 종목 범위
+  # 시가총액 제한 없음 (사용자 2026-11-26 · D-19: paper 라 움직임을 더 보려고). 예전 값 $5M ~ $300M (D-2).
+  # 숫자를 넣으면 다시 그 범위만 본다 (null = 그쪽 끝 제한 없음). 시가총액은 계속 계산해서 기록한다 (KNIME 열)
+  min_market_cap_usd: null
+  max_market_cap_usd: null
   markets: [NASDAQ, NYSE, AMEX]
   security_types: [STOCK, FOREIGN_STOCK, DEPOSITARY_RECEIPT]
   common_share_only: true
@@ -30,7 +32,7 @@ jev:                           # 1단계: 최소 컷 (쓰레기만 거른다)
   pass_choices: [small_positive, big_positive]   # 이 둘이면 confidence 와 상관없이 Claude 로 보낸다
 
 claude:                        # 2단계: 메인 판단 + 매수 근거 리포트
-  model: anthropic/claude-opus-5.5
+  model: anthropic/claude-sonnet-5.5   # 사용자 2026-11-26 (D-19): Opus 5.5 ($4/$20) → Sonnet 5.5 ($2/$10 per M) · $5 크레딧
   reasoning_effort: low        # 속도 우선 (뉴스 매매는 초 단위)
   max_tokens: 1800
   timeout_s: 60

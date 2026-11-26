@@ -10,9 +10,9 @@
 
 ```mermaid
 flowchart LR
-    N["📰 RTPR 실시간 보도자료"] --> U["🔎 종목 범위<br/>시총 $5M~$300M"]
+    N["📰 RTPR 실시간 보도자료"] --> U["🔎 종목 범위<br/>미국 보통주 (시총 제한 없음)"]
     U --> J["🧮 Jev<br/>5단계 분류 · 쓰레기 컷"]
-    J -- "작은/큰 호재" --> C["🧠 Claude Opus 5.5<br/>최종 판단 + 매수 근거 리포트"]
+    J -- "작은/큰 호재" --> C["🧠 Claude Sonnet 5.5<br/>최종 판단 + 매수 근거 리포트"]
     C -- BUY --> W["⏱️ 발행 5분 안 +5% ~ +10%?"]
     W -- 예 --> T["💸 토스증권<br/>3칸 중 1칸 매수 → 사다리 매도"]
     T --> D["🔔 Discord 알림 · 10:00 일일 보고서"]
@@ -22,7 +22,7 @@ flowchart LR
 | 역할 | 도구 | 이유 |
 |---|---|---|
 | 1단계 분류 | **Jev** (TypeSafe 결정 모델 · OpenRouter) | 글을 쓰지 않고 선택지별 확률만 준다 → 빠르고 매우 싸다. 악재 · 중립을 걸러 비싼 모델 호출을 줄인다 |
-| 2단계 판단 | **Claude Opus 5.5** (OpenRouter) | 본문을 읽고 BUY/PASS 를 정하고, 사는 경우 **한국어 매수 근거 리포트를 생성**한다 |
+| 2단계 판단 | **Claude Sonnet 5.5** (OpenRouter · 11-26 에 Opus 5.5 에서 바꿈 · 비용 절반) | 본문을 읽고 BUY/PASS 를 정하고, 사는 경우 **한국어 매수 근거 리포트를 생성**한다 |
 | 매매 | 토스증권 Open API | 프리 · 정규 · 애프터마켓 지정가 주문 |
 | 분석 | **KNIME** | AI 판단이 실제 주가와 맞았는지 혼동행렬로 채점, 의사결정나무로 매수 규칙 학습 |
 
@@ -41,7 +41,7 @@ flowchart LR
 config/settings.yaml      매매 설정 (비밀값 아님)
 src/hbwb/
   news/rtpr.py            RTPR WebSocket 알림 · 기사 본문
-  universe.py             종목 범위 (시가총액)
+  universe.py             종목 범위 (거래소 · 보통주 · 시가총액 기록)
   ai/jev.py · claude.py   1단계 · 2단계 AI (OpenRouter)
   broker/toss.py          토스 Open API (시세 · 계좌 · 주문)
   strategy/rules.py       3칸 · 매수 신호 · 사다리 매도 규칙 (순수 함수 · 실거래와 시뮬레이션이 같이 씀)

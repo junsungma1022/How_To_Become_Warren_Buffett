@@ -30,6 +30,12 @@ INFO = {"symbol": "ABC", "market": "NASDAQ", "securityType": "STOCK", "isCommonS
 
 
 def test_universe_judge(cfg):
+    # D-19: 지금 설정은 시총 제한 없음 → 큰 회사도 통과 · 주식 수 없어도 통과 (시총만 빈칸)
+    assert judge(INFO, 40.0, cfg).ok and judge(INFO, 40.0, cfg).market_cap == 4e8
+    nos = judge({**INFO, "sharesOutstanding": None}, 2.0, cfg)
+    assert nos.ok and nos.market_cap is None
+    # 예전 범위 ($5M ~ $300M) 를 다시 넣으면 예전처럼 거른다
+    cfg["universe"].update(min_market_cap_usd=5_000_000, max_market_cap_usd=300_000_000)
     assert judge(INFO, 2.0, cfg).ok                                  # $20M
     assert judge(INFO, 40.0, cfg).reason == "market_cap_out"          # $400M
     assert judge(INFO, None, cfg).reason == "unclassified:no_prev_close"
