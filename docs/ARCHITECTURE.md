@@ -4,12 +4,12 @@
 
 ```mermaid
 flowchart LR
-    RTPR["RTPR WebSocket<br/>실시간 보도자료 알림"] --> U{"종목 범위<br/>시총 $5M~$300M<br/>(토스 종목정보 × 전일 종가)"}
+    RTPR["RTPR WebSocket<br/>실시간 보도자료 알림"] --> U{"종목 범위<br/>미국 3개 거래소 보통주<br/>(시총 제한 없음 · D-19)"}
     U -- 밖 --> L1[(articles.csv<br/>skip 기록)]
     U -- 안 --> B["RTPR 기사 본문"]
     B --> J{"Jev (TypeSafe)<br/>5단계 분류 · 최소 컷"}
     J -- "큰/작은 악재 · 중립" --> L1
-    J -- "작은/큰 호재" --> C{"Claude Opus 5.5<br/>메인 판단 + 매수 근거 리포트"}
+    J -- "작은/큰 호재" --> C{"Claude Sonnet 5.5<br/>메인 판단 + 매수 근거 리포트"}
     C -- PASS --> L1
     C -- BUY --> W{"발행 5분 안<br/>+5% ~ +10%?"}
     W -- 아니오 --> L1
@@ -25,7 +25,7 @@ flowchart LR
 | 단계 | 담당 | 무엇을 하나 | 실패하면 |
 |---|---|---|---|
 | 뉴스 | `news/rtpr.py` | WebSocket 알림 → 본문 받기 (`format=text`) | 다시 붙기 (2·4·…·60초), 키·구독 오류면 정지 + #critical |
-| 종목 범위 | `universe.py` | 시가총액 = sharesOutstanding × 전일 종가 | 모르면 `unclassified:*` 로 빼고 기록 (추측 금지) |
+| 종목 범위 | `universe.py` | 거래소 · 보통주 · ACTIVE · (설정하면) 시가총액 = sharesOutstanding × 전일 종가 · 지금 제한 없음 (D-19) | 모르면 `unclassified:*` 로 빼고 기록 (추측 금지) |
 | 1단계 AI | `ai/jev.py` | 5단계 선택지 확률 → 작은/큰 호재만 통과 | 매수 안 함 |
 | 2단계 AI | `ai/claude.py` | BUY/PASS + 근거 리포트(한국어) | JSON 깨지면 매수 안 함 |
 | 매매 | `engine/runner.py` · `strategy/rules.py` | 3칸 · 5분 안 +5% ~ +10% 매수 (D-15) · 이전 프로그램 매도 · 애프터 끝 ET 19:50 (D-13) | 매도 미체결이면 가격 고쳐 다시, 그래도 남으면 #critical |
