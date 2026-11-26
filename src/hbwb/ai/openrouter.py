@@ -1,7 +1,7 @@
 """OpenRouter 하나로 두 모델을 부른다.
 
 - Jev (TypeSafe 결정 모델): `POST /api/alpha/decisions` — 글을 생성하지 않고 선택지별 확률을 돌려준다
-- Claude Opus 5.5: `POST /api/v1/chat/completions` (`anthropic/claude-opus-5.5`)
+- Claude (settings `claude.model` · Sonnet 5.5 부터 D-19): `POST /api/v1/chat/completions`
 
 호출마다 비용(`usage.cost`, OpenRouter 크레딧 = 달러)을 돌려줘서 일일 보고서에 AI 비용을 적는다.
 """

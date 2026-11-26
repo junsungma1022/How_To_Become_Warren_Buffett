@@ -1,4 +1,4 @@
-"""종목 범위: 시가총액 $5M ~ $300M (사용자 결정 2026-11-18 · 이전 U1 의 시총 기준 · 거래량 조건 없음).
+"""종목 범위: 미국 3개 거래소 보통주 (+ settings 의 시가총액 범위 · 2026-11-26 부터 제한 없음 · D-19).
 
 시가총액 = 토스 `/api/v1/stocks` 의 sharesOutstanding × 전일 종가 (토스 일봉).
 모르는 것은 추측하지 않는다 — 주식 수 · 전일 종가 · 시장 · 종목 유형 중 하나라도 없으면 'unclassified' 로 빼고 기록한다.
@@ -42,12 +42,14 @@ def judge(info: dict | None, prev_close: float | None, cfg: dict) -> UniverseChe
         return UniverseCheck(False, f"security_type:{stype}", market=market, name=name)
     if u.get("common_share_only") and info.get("isCommonShare") is False:
         return UniverseCheck(False, "not_common_share", market=market, name=name)
-    if not shares or shares <= 0:
+    lo, hi = u.get("min_market_cap_usd"), u.get("max_market_cap_usd")
+    bounded = lo is not None or hi is not None
+    if bounded and (not shares or shares <= 0):
         return UniverseCheck(False, "unclassified:no_shares", market=market, name=name)
     if not prev_close or prev_close <= 0:
         return UniverseCheck(False, "unclassified:no_prev_close", shares=shares, market=market, name=name)
-    mcap = shares * prev_close
-    if not u["min_market_cap_usd"] <= mcap <= u["max_market_cap_usd"]:
+    mcap = shares * prev_close if shares and shares > 0 else None
+    if bounded and not ((lo is None or mcap >= lo) and (hi is None or mcap <= hi)):
         return UniverseCheck(False, "market_cap_out", mcap, prev_close, shares, market, name)
     return UniverseCheck(True, "ok", mcap, prev_close, shares, market, name)
 

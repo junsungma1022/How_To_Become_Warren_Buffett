@@ -1,4 +1,4 @@
-"""2단계: Claude Opus 5.5 가 메인 판단을 하고, 매수할 때는 한국어 '매수 근거 리포트'를 쓴다 (생성형 AI 의 역할).
+"""2단계: Claude (settings 의 claude.model · 지금 Sonnet 5.5 · D-19) 가 메인 판단을 하고, 매수할 때는 한국어 '매수 근거 리포트'를 쓴다 (생성형 AI 의 역할).
 
 응답은 JSON 하나. 형식이 깨지면 매수하지 않는다 (fail-closed · 이유는 기록).
 """
@@ -11,8 +11,8 @@ from dataclasses import dataclass, field
 
 from .openrouter import OpenRouter, Usage
 
-SYSTEM = """You are the final decision-maker in an automated news-trading experiment on US small-cap stocks
-(market cap $5M–$300M, including pre-market and after-hours). A cheap screening model has already flagged the
+SYSTEM = """You are the final decision-maker in an automated news-trading experiment on {UNIVERSE}
+(including pre-market and after-hours). A cheap screening model has already flagged the
 press release below as likely positive. Your job: decide whether the engine may BUY on this news.
 
 {RULES}
@@ -60,8 +60,18 @@ def rules_text(cfg: dict) -> str:
             f"  sell all if still {times}; close before the session ends.")
 
 
+def universe_text(cfg: dict) -> str:
+    u = cfg["universe"]
+    lo, hi = u.get("min_market_cap_usd"), u.get("max_market_cap_usd")
+    if lo is None and hi is None:
+        return "US-listed common stocks of any size"
+    m = lambda v: f"${v / 1e6:,.0f}M"  # noqa: E731
+    rng = f"{m(lo)}–{m(hi)}" if lo is not None and hi is not None else (f"at least {m(lo)}" if lo is not None else f"up to {m(hi)}")
+    return f"US-listed common stocks (market cap {rng})"
+
+
 def system_prompt(cfg: dict, with_report: bool = True) -> str:
-    return (SYSTEM if with_report else SYSTEM_BRIEF).replace("{RULES}", rules_text(cfg))
+    return (SYSTEM if with_report else SYSTEM_BRIEF).replace("{RULES}", rules_text(cfg)).replace("{UNIVERSE}", universe_text(cfg))
 
 
 @dataclass

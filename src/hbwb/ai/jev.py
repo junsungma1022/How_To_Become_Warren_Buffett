@@ -17,9 +17,10 @@ KO = {"big_negative": "큰 악재", "small_negative": "작은 악재", "neutral"
       "small_positive": "작은 호재", "big_positive": "큰 호재"}
 
 INSTRUCTIONS = (
-    "You are screening a press release about a US-listed small-cap stock (market cap between $5M and $300M). "
+    "You are screening a press release about a US-listed stock (market cap is given when known; many are small caps). "
     "Judge how this news most likely moves THIS company's share price within the next 30 minutes after release. "
-    "Small caps react strongly to concrete, material, company-specific news and weakly to routine announcements."
+    "Small caps react strongly to concrete, material, company-specific news and weakly to routine announcements; "
+    "large caps need news that is large relative to their size."
 )
 CRITERIA = {
     "big_negative": "Severe negative: large dilutive offering or warrants at a discount, failed pivotal trial, FDA rejection, "
