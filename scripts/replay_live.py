@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from hbwb.broker.toss import TossClient, TossError  # noqa: E402
 from hbwb.clock import ET, iso_utc, ms_to, parse_iso_ms  # noqa: E402
+from hbwb.engine.runner import dup_key, us_day  # noqa: E402
 from hbwb.config import ROOT, load_dotenv_file, load_secrets, load_settings, mode_cfg  # noqa: E402
 from hbwb.report.daily import read_csv  # noqa: E402
 from hbwb.strategy.backtest import simulate  # noqa: E402
@@ -71,10 +72,14 @@ async def main(args) -> int:
     data = ROOT / cfg["paths"]["data_dir"]
     arts = [a for a in read_csv(data / "ledger" / "articles.csv")
             if a.get("universe_ok") == "true" and a.get("jev_choice") and (not args.only_claude or a.get("claude_called") == "true")]
-    # 같은 (종목, 발행 시각) 중복 기사는 한 번만 (RTPR 이 REG- 판 등으로 두 번 보내는 경우)
+    # 같은 보도자료 중복은 한 번만 (RTPR 이 REG- 판 등으로 또 보내는 경우 · 엔진과 같은 기준 D-21)
     uniq = {}
     for a in arts:
-        uniq.setdefault((a["ticker"], a.get("published_utc") or a.get("received_utc")), a)
+        if a.get("action_reason") == "duplicate":
+            continue
+        t = a.get("published_utc") or a.get("received_utc")
+        key = dup_key(a["ticker"], a.get("title") or t, us_day(parse_iso_ms(t))) if a.get("title") else (a["ticker"], t)
+        uniq.setdefault(key, a)
     arts = list(uniq.values())
     print(f"기사 {len(arts)}건 · 토스 1분봉 받는 중 (AI 호출 없음)", flush=True)
     slot = cfg["capital"]["budget_usd"] / cfg["capital"]["slots"]

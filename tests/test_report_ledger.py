@@ -71,3 +71,20 @@ def test_history_table():
                     {"exit_utc": "2026-11-20T01:00:00Z", "pnl_usd": "2"}], report_day_key)
     assert [(r["day"], r["trades"], r["cumulative"]) for r in rows] == [("2026-11-19", 2, 2.0), ("2026-11-20", 1, 4.0)]
     assert "+4.0%" in render_history(rows, 100)
+
+
+def test_ledger_extends_old_header(tmp_path):
+    """D-21: 끝에 열만 늘었으면 옛 articles.csv 를 지우지 않고 열을 늘려 이어 쓴다."""
+    import csv as _csv
+    from hbwb.ledger import ARTICLE_COLS, CsvLedger
+    old_cols = ARTICLE_COLS[:-3]
+    p = tmp_path / "articles.csv"
+    with open(p, "w", encoding="utf-8", newline="") as f:
+        w = _csv.DictWriter(f, fieldnames=old_cols)
+        w.writeheader()
+        w.writerow({"article_id": "OLD1", "ticker": "ABC"})
+    led = CsvLedger(p, ARTICLE_COLS)
+    led.append({"article_id": "NEW1", "ticker": "XYZ", "duplicate_of": "OLD1"})
+    rows = led.rows()
+    assert [r["article_id"] for r in rows] == ["OLD1", "NEW1"] and rows[1]["duplicate_of"] == "OLD1"
+    assert list(rows[0].keys()) == ARTICLE_COLS

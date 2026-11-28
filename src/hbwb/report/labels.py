@@ -6,6 +6,7 @@ REASONS = {
     "universe": "종목 범위 밖",
     "jev_error": "Jev 호출 실패",
     "jev_filtered": "Jev: 호재 아님",
+    "duplicate": "같은 보도자료 중복",
     "stale_alert": "늦은 알림 (2분 초과)",
     "claude_error": "Claude 호출 실패",
     "claude_pass": "Claude 패스",

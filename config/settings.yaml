@@ -34,6 +34,7 @@ jev:                           # 1단계: 최소 컷 (쓰레기만 거른다)
 claude:                        # 2단계: 메인 판단 + 매수 근거 리포트
   model: anthropic/claude-sonnet-5.5   # 사용자 2026-11-26 (D-19): Opus 5.5 ($4/$20) → Sonnet 5.5 ($2/$10 per M) · $5 크레딧
   reasoning_effort: low        # 속도 우선 (뉴스 매매는 초 단위)
+  buy_min_grade: 4             # 사용자 2026-11-28 (D-21 · 3-B 의 2번): 영향 등급이 이 이상이고 희석 · 홍보성 · 발행 전 급등이 아니면 BUY
   max_tokens: 1800
   timeout_s: 60
 

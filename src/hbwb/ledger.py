@@ -20,6 +20,8 @@ ARTICLE_COLS = [
     "claude_parse_error", "ref_price", "ref_source", "signal_utc", "signal_price", "signal_rise_pct",
     "over_cap_max_pct",   # 상한(+10%) 위라서 안 샀을 때 본 최고 상승률
     "action", "action_reason", "ai_cost_usd", "mode",
+    # D-21: 새 열은 끝에만 붙인다 (예전 파일은 열을 늘려 그대로 이어 쓴다)
+    "change_before_pub_pct", "move_since_pub_pct", "duplicate_of",
 ]
 
 TRADE_COLS = [
@@ -39,7 +41,20 @@ class CsvLedger:
             with open(self.path, encoding="utf-8", newline="") as f:
                 head = next(csv.reader(f), None)
             if head and head != cols:
-                raise RuntimeError(f"{self.path} 의 열이 코드와 다르다 — 파일을 옮기고 새로 시작할 것")
+                if len(head) < len(cols) and cols[:len(head)] == head:
+                    self._extend_header()          # 끝에 열만 늘었다 → 옛 줄은 빈칸으로 두고 그대로 이어 쓴다
+                else:
+                    raise RuntimeError(f"{self.path} 의 열이 코드와 다르다 — 파일을 옮기고 새로 시작할 것")
+
+    def _extend_header(self) -> None:
+        with open(self.path, encoding="utf-8", newline="") as f:
+            old = list(csv.DictReader(f))
+        tmp = self.path.with_suffix(".csv.tmp")
+        with open(tmp, "w", encoding="utf-8", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=self.cols)
+            w.writeheader()
+            w.writerows({k: r.get(k) or "" for k in self.cols} for r in old)
+        tmp.replace(self.path)
 
     def append(self, row: dict) -> None:
         unknown = set(row) - set(self.cols)

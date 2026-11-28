@@ -53,6 +53,14 @@ def us_day(ms: int) -> str:
     return ms_to(ms, ET).strftime("%Y-%m-%d")
 
 
+def dup_key(ticker: str, title: str, day: str) -> tuple[str, str, str]:
+    """같은 날 · 같은 종목 · 같은 제목(앞의 'REG-' 와 공백 · 대소문자 무시) = 같은 보도자료 (D-21)."""
+    t = (title or "").strip()
+    if t.upper().startswith("REG-"):
+        t = t[4:]
+    return (ticker.upper(), " ".join(t.lower().split()), day)
+
+
 class Engine:
     def __init__(self, cfg: dict, secrets: Secrets, mode: str):
         mode = normalize_mode(mode)                # 'shadow' = 예전 이름
@@ -78,6 +86,7 @@ class Engine:
         self.windows: list[tuple[str, int, int]] = []
         self.fee_rate = cfg["fees"]["commission_rate_default"]
         self.seen: set[str] = set()
+        self.seen_titles: dict[tuple[str, str, str], str] = {}   # 중복 보도자료 (D-21)
         self.last_alert_ms = now_ms()
         self.paper_realized = 0.0
         self.paper_snapshot: tuple[float, float] | None = None
@@ -138,7 +147,12 @@ class Engine:
         # 재시작해도 안전장치가 풀리지 않게: 오늘 실현손익 · 연패 · 오늘 산 종목을 거래 기록에서 복원
         self.risk.rebuild(self.trades.rows(), self.day_key_of, us_day, parse_iso_ms,
                           [(sym, us_day(p.entry_ms)) for sym, p in self.positions.items() if p.entry_ms])
-        self.seen.update(r["article_id"] for r in self.articles.rows() if r.get("article_id"))
+        for r in self.articles.rows():
+            if r.get("article_id"):
+                self.seen.add(r["article_id"])
+            rec = parse_iso_ms(r.get("received_utc"))
+            if r.get("title") and rec and r.get("action_reason") != "duplicate":
+                self.seen_titles.setdefault(dup_key(r.get("ticker", ""), r["title"], us_day(rec)), r.get("article_id", ""))
         self.ev.write("risk_restored", realized_today=self.risk.realized_today, consecutive_losses=self.risk.consecutive_losses,
                       traded_today=sorted(f"{a}@{b}" for a, b in self.risk.traded), seen=len(self.seen))
         c = self.cfg["capital"]
@@ -305,6 +319,11 @@ class Engine:
         row.update(title=art.title, exchange=art.exchange)
         if art.status != 200 or not art.body:
             return done("skip", f"article_http_{art.status}")
+        dkey = dup_key(a.ticker, art.title, us_day(a.received_ms))
+        if dkey in self.seen_titles:            # RTPR 이 같은 보도자료를 REG- 판 등으로 또 보냄 (D-21)
+            row["duplicate_of"] = self.seen_titles[dkey]
+            return done("skip", "duplicate")
+        self.seen_titles[dkey] = a.article_id
         stale = a.age_s is not None and a.age_s > self.cfg["news"]["max_alert_age_s"]
 
         try:
@@ -330,13 +349,16 @@ class Engine:
         if block:
             return done("skip", f"risk:{block}")
 
+        # 가격 맥락 (D-21): 발행 전 가격(= 매수 기준가)과 지금 가격을 따로 — Claude 는 '발행 전 급등' 만 반영됐다고 본다
+        ref, ref_src = await self.reference_price(a.ticker, a.published_ms or a.received_ms)
         prices = await self.toss.last_prices([a.ticker])
         last = prices.get(a.ticker)
         chg = round(100 * (last / uc.prev_close - 1), 2) if last and uc.prev_close else None
-        row.update(last_price=last, change_vs_prev_close_pct=chg)
+        pc = claude_mod.price_context(uc.prev_close, ref, last)
+        row.update(last_price=last, change_vs_prev_close_pct=chg, ref_price=ref, ref_source=ref_src,
+                   change_before_pub_pct=pc["change_before_pub_pct"], move_since_pub_pct=pc["move_since_pub_pct"])
         ctx = {"market_cap_usd": round(uc.market_cap) if uc.market_cap else None, "session": self.session_now(),
-               "minutes_since_publish": round((now_ms() - (a.published_ms or a.received_ms)) / 60000, 1),
-               "prev_close": uc.prev_close, "last_price": last, "change_vs_prev_close_pct": chg}
+               "minutes_since_publish": round((now_ms() - (a.published_ms or a.received_ms)) / 60000, 1), **pc}
         row["claude_called"] = True
         try:
             cr = await claude_mod.judge(self.ai, self.cfg, a.ticker, art.title, art.body, ctx, with_report=True)
@@ -354,7 +376,7 @@ class Engine:
         if not cr.buy:
             return done("skip", "claude_pass")
 
-        result = await self.watch_and_enter(a, art.title, uc, jr, cr, row)
+        result = await self.watch_and_enter(a, art.title, uc, jr, cr, row, ref=ref, ref_src=ref_src)
         done("buy" if result == "filled" else "skip", result)
 
     # ── 매수: 5분 안 +5% 신호 → 칸 금액만큼 한 번에 ──────────────────────────
@@ -372,7 +394,8 @@ class Engine:
             self.ev.write("ref_error", symbol=sym, code=e.code)
         return None, "none"
 
-    async def watch_and_enter(self, a: Alert, title: str, uc, jr, cr, row: dict) -> str:
+    async def watch_and_enter(self, a: Alert, title: str, uc, jr, cr, row: dict,
+                              ref: float | None = None, ref_src: str = "none") -> str:
         sym, pub = a.ticker, a.published_ms or a.received_ms
         async with self._entry_lock:
             block = self._pre_block(sym)
@@ -381,7 +404,9 @@ class Engine:
                 return f"risk:{block or 'slots_full'}"
             self.pending[sym] = slot
         try:
-            ref, src = await self.reference_price(sym, pub)
+            src = ref_src
+            if ref is None:                      # Claude 전에 못 구했으면 한 번 더
+                ref, src = await self.reference_price(sym, pub)
             row.update(ref_price=ref, ref_source=src)
             poll = self.cfg["entry"]["poll_interval_s"]
             over_cap = 0                     # 상한(+10%) 위라서 안 산 횟수
