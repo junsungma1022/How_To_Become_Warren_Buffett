@@ -139,6 +139,9 @@ def _validate(cfg: dict) -> None:
     cap = e.get("trigger_max_rise_pct")
     if cap is not None and float(cap) <= float(e["trigger_rise_pct"]):
         problems.append("entry.trigger_max_rise_pct 는 trigger_rise_pct 보다 커야 함 (또는 null)")
+    g = cfg.get("claude", {}).get("buy_min_grade")
+    if not (isinstance(g, int) and 1 <= g <= 5):
+        problems.append("claude.buy_min_grade 는 1 ~ 5 정수")
     hh, _, mm = str(cfg.get("report", {}).get("daily_time_kst", "")).partition(":")
     if not (hh.isdigit() and 0 <= int(hh) <= 23 and mm == "00"):
         problems.append('report.daily_time_kst 는 정각 "HH:00"')

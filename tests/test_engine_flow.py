@@ -50,8 +50,11 @@ class FakeUniverse:
 
 
 class FakeRtpr:
+    titles: dict = {}                   # url 앞부분 → 제목 (없으면 기사마다 다른 제목)
+
     async def article(self, url):
-        return Article("ABC wins $50M contract", "NASDAQ", "body text", 200)
+        aid = url.split("/a/")[-1].split("?")[0]
+        return Article(self.titles.get(aid, f"ABC wins $50M contract #{aid}"), "NASDAQ", "body text", 200)
 
     async def aclose(self):
         pass
@@ -299,3 +302,37 @@ def test_preflight_restores_risk_and_seen(tmp_path, cfg):
     assert "S1" in eng2.seen
     assert eng2.risk.block_reason("AAA", __import__("hbwb.engine.runner", fromlist=["x"]).us_day(now_ms()), 100, 0) == \
         "ticker_already_traded_today"
+
+
+def test_same_press_release_twice_calls_ai_once(tmp_path, cfg):
+    """D-21: RTPR 이 같은 보도자료를 REG- 판으로 또 보내면 두 번째는 AI 를 부르지 않는다."""
+    ai = FakeAI(claude='{"decision":"PASS","impact_grade":3,"confidence":0.8,"catalyst_type":"buyback"}')
+    eng = make_engine(tmp_path, cfg, ai)
+    eng.rtpr.titles = {"R1": "REG-Transaction in Own Shares", "R2": "Transaction in  own shares"}
+    asyncio.run(eng.handle_alert(alert("ABC", "R1")))
+    asyncio.run(eng.handle_alert(alert("ABC", "R2")))
+    rows = eng.articles.rows()
+    assert [r["action_reason"] for r in rows] == ["claude_pass", "duplicate"]
+    assert rows[1]["duplicate_of"] == rows[0]["article_id"] and ai.chats == 1
+
+
+def test_claude_sees_price_before_and_after_publication(tmp_path, cfg):
+    """D-21: Claude 에 '발행 전 등락' 과 '발행 뒤 움직임' 을 따로 준다 · 그 기준가로 매수 신호를 본다."""
+    seen = {}
+    ai = FakeAI()
+    orig = ai.chat
+
+    async def chat(model, messages, **kw):
+        seen["user"] = messages[1]["content"]
+        seen["system"] = messages[0]["content"]
+        return await orig(model, messages, **kw)
+    ai.chat = chat
+    eng = make_engine(tmp_path, cfg, ai)
+    asyncio.run(eng.handle_alert(alert("ABC", "P1")))
+    u = seen["user"]
+    assert "Last price before publication: 2.0" in u
+    assert "Change before publication (% vs previous close): 11.11" in u      # 1.8 → 2.0
+    assert "Move since publication (% vs last price before publication): 6.0" in u
+    assert "BUY when impact_grade is 4 or higher" in seen["system"]
+    row = eng.articles.rows()[-1]
+    assert row["ref_price"] == "2" and row["move_since_pub_pct"] == "6" and row["action_reason"] == "filled"

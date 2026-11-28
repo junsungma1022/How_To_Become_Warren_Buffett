@@ -18,13 +18,19 @@ press release below as likely positive. Your job: decide whether the engine may 
 {RULES}
 So a good BUY is news strong enough to keep the price rising for minutes, not just a brief spike.
 
-BUY only when ALL of these hold:
-1. The news is new, concrete, material and company-specific (numbers, named counterparties, regulatory decisions).
-2. The magnitude is large relative to the company's market cap.
-3. It is not offset by dilution or financing terms in the same release (offerings, warrants, convertible notes, ATM).
-4. It is not promotional fluff, a reiteration of old news, conference/webinar participation, or a law-firm solicitation.
-5. The price has not obviously already absorbed the news (use the price context if given).
-Otherwise PASS. When unsure, PASS — missing a trade costs nothing, a bad trade costs money.
+This is a paper-trading experiment: we want to observe what happens after positive news, so do not PASS
+merely out of general caution. Decide in two steps:
+1. Grade the news honestly (impact_grade below), judging the magnitude relative to the company's market cap.
+   New, concrete, company-specific facts (numbers, named counterparties, regulatory decisions) grade higher;
+   routine or procedural items grade as neutral.
+2. BUY when impact_grade is {MIN_GRADE} or higher AND none of these exclusions applies:
+   a. The positive news is offset by dilution or financing terms in the same release (offerings, warrants,
+      convertible notes, ATM).
+   b. It is promotional fluff, a reiteration of old news, conference/webinar participation, or a law-firm solicitation.
+   c. The stock already rose sharply BEFORE publication (see "Change before publication"), so the news looks
+      leaked or priced in. A rise AFTER publication is expected and is not a reason to PASS: the engine itself
+      requires that rise before it buys.
+   Otherwise PASS.
 
 Respond with ONE JSON object and nothing else:
 {
@@ -71,7 +77,8 @@ def universe_text(cfg: dict) -> str:
 
 
 def system_prompt(cfg: dict, with_report: bool = True) -> str:
-    return (SYSTEM if with_report else SYSTEM_BRIEF).replace("{RULES}", rules_text(cfg)).replace("{UNIVERSE}", universe_text(cfg))
+    return ((SYSTEM if with_report else SYSTEM_BRIEF).replace("{RULES}", rules_text(cfg))
+            .replace("{UNIVERSE}", universe_text(cfg)).replace("{MIN_GRADE}", str(int(cfg["claude"]["buy_min_grade"]))))
 
 
 @dataclass
@@ -92,15 +99,29 @@ class ClaudeResult:
         return self.decision == "BUY" and self.parse_error is None
 
 
+CTX_LABELS = (("market_cap_usd", "Market cap (USD)"), ("session", "Session"),
+              ("minutes_since_publish", "Minutes since publication"), ("prev_close", "Previous close"),
+              ("pre_news_price", "Last price before publication"),
+              ("change_before_pub_pct", "Change before publication (% vs previous close)"),
+              ("last_price", "Last trade price now"),
+              ("move_since_pub_pct", "Move since publication (% vs last price before publication)"))
+
+
 def user_message(ticker: str, title: str, body: str, ctx: dict, body_max: int) -> str:
+    """가격 맥락: 발행 전 등락과 발행 뒤 움직임을 따로 준다 (D-21 · 규칙 c 는 '발행 전' 만 본다)."""
     lines = [f"Ticker: {ticker}", f"Headline: {title}"]
-    for k, label in (("market_cap_usd", "Market cap (USD)"), ("session", "Session"),
-                     ("minutes_since_publish", "Minutes since publication"), ("prev_close", "Previous close"),
-                     ("last_price", "Last trade price"), ("change_vs_prev_close_pct", "Change vs previous close (%)")):
+    for k, label in CTX_LABELS:
         if ctx.get(k) is not None:
             lines.append(f"{label}: {ctx[k]}")
     lines += ["", "Press release:", (body or "")[:body_max]]
     return "\n".join(lines)
+
+
+def price_context(prev_close: float | None, pre_news: float | None, last: float | None) -> dict:
+    """발행 전 가격(기준가) · 지금 가격 → Claude 에 줄 등락률 두 개."""
+    pct = lambda a, b: round(100 * (a / b - 1), 2) if a and b else None  # noqa: E731
+    return {"prev_close": prev_close, "pre_news_price": pre_news, "last_price": last,
+            "change_before_pub_pct": pct(pre_news, prev_close), "move_since_pub_pct": pct(last, pre_news)}
 
 
 _OBJ = re.compile(r"\{.*\}", re.S)

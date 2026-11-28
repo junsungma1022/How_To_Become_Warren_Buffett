@@ -175,12 +175,16 @@ async def stage_jev(arts, ai, cfg, stores):
 
 
 def price_ctx(a, uc, bars_s):
+    """실시간 엔진과 같은 가격 맥락 (D-21): 발행 전 가격 · 발행 1분 뒤 가격 (그 뒤 봉은 보지 않는다)."""
     bars = (bars_s.d.get(a["k"]) or {}).get("bars") or []
     before = [b for b in bars if b["start_ms"] + 60_000 <= a["pub_ms"]]   # 기사 전에 끝난 봉만 (미래 정보 금지)
-    last = before[-1]["c"] if before else None
-    chg = round(100 * (last / uc.prev_close - 1), 2) if last and uc.prev_close else None
+    upto = [b for b in bars if b["start_ms"] + 60_000 <= a["pub_ms"] + 60_000]   # 판단 시점 (발행 +1분) 까지 끝난 봉
+    pre = before[-1]["c"] if before else None
+    now = upto[-1]["c"] if upto else pre
+    chg = round(100 * (pre / uc.prev_close - 1), 2) if pre and uc.prev_close else None
     return {"market_cap_usd": round(uc.market_cap) if uc.market_cap else None, "session": session_of(a["pub_ms"]),
-            "minutes_since_publish": 1.0, "prev_close": uc.prev_close, "last_price": last, "change_vs_prev_close_pct": chg}
+            "minutes_since_publish": 1.0, "change_vs_prev_close_pct": chg,
+            **claude_mod.price_context(uc.prev_close, pre, now)}
 
 
 async def stage_claude(arts, ai, cfg, stores, cap: int):
@@ -249,7 +253,7 @@ def build(arts, cfg, stores, out: Path, fee_rate: float, slot_usd: float) -> int
                 "session": session_of(a["pub_ms"]), "exchange": a["exchange"], "title_len": len(a["title"]),
                 "body_len": len(a["text"]), "market_cap_usd": round(uc.market_cap),
                 "log10_market_cap": round(math.log10(uc.market_cap), 4), "prev_close": uc.prev_close,
-                "price_at_news": ctx["last_price"], "change_vs_prev_close_pct": ctx["change_vs_prev_close_pct"],
+                "price_at_news": ctx["pre_news_price"], "change_vs_prev_close_pct": ctx["change_vs_prev_close_pct"],
                 "ret_15m_before_pct": round(100 * (before[-1]["c"] / before[0]["o"] - 1), 3) if len(before) >= 2 else None,
                 "volume_15m_before": sum(b["v"] for b in before) if before else 0,
                 "jev_choice": choice or "", "jev_grade": jev_mod.GRADE.get(choice) if choice else None,
