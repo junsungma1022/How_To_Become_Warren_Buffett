@@ -409,7 +409,7 @@ class Engine:
                 ref, src = await self.reference_price(sym, pub)
             row.update(ref_price=ref, ref_source=src)
             poll = self.cfg["entry"]["poll_interval_s"]
-            over_cap = 0                     # 상한(+10%) 위라서 안 산 횟수
+            over_cap = 0                     # 상한(trigger_max_rise_pct) 위라서 안 산 횟수
             while True:
                 t = now_ms()
                 last = (await self.toss.last_prices([sym])).get(sym)
@@ -420,7 +420,7 @@ class Engine:
                     "expired" if t > pub + self.cfg["entry"]["trigger_window_min"] * 60_000 else None)
                 if sig == "expired":
                     if over_cap:
-                        return "over_cap_5m"           # 5분 내내 +10% 위에 있었거나 구간을 건너뜀 → 추격 매수 안 함
+                        return "over_cap_5m"           # 5분 내내 상한 위에 있었거나 구간을 건너뜀 → 추격 매수 안 함
                     return "no_trigger_5m"
                 if sig == "over_cap":
                     over_cap += 1

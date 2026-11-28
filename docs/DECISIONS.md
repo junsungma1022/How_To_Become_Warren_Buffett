@@ -124,3 +124,13 @@
 - C: 같은 날 · 같은 종목 · 같은 제목 (앞의 `REG-` · 공백 · 대소문자 무시) 이면 두 번째부터 `duplicate` 로 건너뜀 (AI 안 부름 · `duplicate_of` 에 첫 기사) · 재시작해도 기록에서 복원 · 실측 중복: SHEL · THRM (3 번) · TLSA · TIGO
 - articles.csv 끝에 열 3 개 (`change_before_pub_pct` · `move_since_pub_pct` · `duplicate_of`) · 옛 파일은 열을 늘려 이어 쓴다 (끝에만 붙였을 때만)
 - 데이터셋 Claude 단계도 같은 프롬프트 · 가격 맥락 (발행 전 = 발행 전 마지막 봉 · 발행 뒤 = 발행 +1분까지 끝난 봉)
+
+## D-22 · 2026-11-28 — KNIME 결과로 매수 상한 +10% → +7% (사용자 승인 "매수상한 바꿔도 돼") · D-15 개정
+- 데이터: 과거 보도자료 11,260건 (2026-05 ~ 10 · `news_dataset.csv`) 중 5분 안 +5% 신호 843건 (WIN 303 · LOSS 540 · 기준선 35.9%)
+- KNIME 워크플로우 `knime/KNIME_project` (사용자가 GUI 로 만듦 · 13주차 설정 그대로):
+  - Scorer ① (`label_buy` vs `jev_pred`): Jev BUY 693건 중 WIN 259 → Precision 37.4% (기준선 35.9% · +1.5%p 로 약함)
+  - Decision Tree (Gini · No pruning · 최소 50 · 70/30 · seed 0): 시험 253건 Accuracy 61.7% — 전부 LOSS 라고 찍는 68.4% 보다 낮다 · WIN Precision 36.1% (시험 WIN 비율 31.6%). 맨 위 갈림 = `session` (학습 70%: 애프터 WIN 54.6% · 프리 35.7% · 정규 21.4%)
+- 진입 상승률별 (843건 전체 · Python 집계 · KNIME Scatter Plot x `sim_entry_rise_pct` y `sim_ret_pct` 로 같은 그림): +5 ~ 7% 806건 WIN 37.5% 평균 +0.08% · **+7 ~ 10% 29건 WIN 3.4% 평균 −4.90%** · +10% 이상 8건 WIN 0%
+- 결정: `entry.trigger_max_rise_pct` 10.0 → **7.0** (프롬프트 · 엔진 · 표시가 설정을 따라간다). 세션 제한은 하지 않음 (정규장 88건 · 남은 장 하루)
+- 한계: 과거 시뮬레이션 (1분봉 · paper 체결 낙관적) · +7 ~ 10% 구간 표본 29건
+- KNIME 워크플로우는 Reset 뒤 폴더째 `knime/KNIME_project` 에 커밋 (실행 데이터 없음). gitleaks 기본 규칙이 Scatter Plot 설정의 열 이름 줄 (`xAxisColumnV3`) 을 키로 오인 → `.gitleaks.toml` 에 그 줄 모양만 허용 (진짜 키 검출은 그대로 · 시험함)

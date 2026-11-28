@@ -17,6 +17,8 @@
 - 두 장 (11/25 · 11/27) 실측: Claude 67 회 모두 PASS → 매수 0 · 매도 0 (D-20). `replay_live.py` 로 다시 돌려 봄: Claude PASS 67 중 5분 안 +5~10% 신호 11 · 샀다면 3 승 8 패 · 평균 −0.79% (PASS 가 대체로 맞았다) · Jev 가 걸러낸 569 중 신호 4 (4 승 · 표본 작음)
 - 2026-11-28 (사용자 승인 · D-21): Claude 에 '발행 전 등락' 과 '발행 뒤 움직임' 을 따로 준다 · 판단 규칙 = 등급 ≥ `claude.buy_min_grade` (4) 이고 희석 · 홍보성 · 발행 전 급등이 아니면 BUY · 같은 보도자료 중복은 AI 를 한 번만
 - **엔진은 11-28 15:3x 에 사용자가 `hbwb stop` 으로 꺼 둠 → 월요일 18:00 KST 전에 `hbwb start` 필수**
+- 2026-11-28 (D-22): KNIME 워크플로우 `knime/KNIME_project` 완성 (CSV Reader → Row Filter → Scorer · Column Filter → Partitioner → Decision Tree → Scorer · Scatter Plot) · 매수 상한 +10% → **+7%** (+7 ~ 10% 구간 29건 중 1승)
+- 데이터셋 Claude 단계: 50건 중 33건만 (OpenRouter 신규 계정 분당 한도 429) · BUY 2 (둘 다 WIN · 표본 2)
 - 실거래 아직 안 함
 
 ## 사람이 할 일 (순서대로)

@@ -1,5 +1,11 @@
 # KNIME 워크플로우 가이드 (수업 12 · 13주차 방식 그대로)
 
+> **실제로 만든 것 (2026-11-28 · KNIME 5.12.1 · D-22)**: `knime/KNIME_project/` (워크스페이스 폴더 그대로 · Reset 상태 · KNIME 에서 File → Import 또는 워크스페이스에 복사해서 연다)
+> `CSV Reader(news_dataset.csv) → Row Filter(triggered = yes · 843행) ─┬─ Scorer ①(label_buy vs jev_pred)`
+> `                                                                    ├─ Column Filter(15열) → Table Partitioner(70% · random · seed 0) → Decision Tree Learner(Gini · No pruning · 50) → Predictor → Scorer ②`
+> `                                                                    └─ Scatter Plot(x sim_entry_rise_pct · y sim_ret_pct)`
+> 결과와 그로 바꾼 설정은 `docs/DECISIONS.md` D-22. 아래 A · B · C 는 처음 계획 (시간 때문에 위 한 워크플로우로 줄였다 · 5.12 에는 Color Manager 가 안 보여 색 구분은 생략).
+
 KNIME 은 코드가 아니라 **화면(GUI)에서 노드를 끌어다 놓고 → 연결하고 → Configure → Execute** 하는 도구다 (12주차 16쪽 '작업 루틴').
 그래서 이 워크플로우들은 사람이 KNIME 화면에서 직접 만든다. Python 은 KNIME 이 읽을 CSV 만 만든다.
 아래 노드 · 설정값은 **강의자료에 나온 것만** 쓴다. 수업과 다른 값을 쓰는 곳은 이유를 적었다.

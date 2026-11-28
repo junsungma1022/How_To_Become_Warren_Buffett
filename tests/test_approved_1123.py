@@ -51,10 +51,10 @@ def test_calendar_after_window_adjusted_regular_untouched():
     assert w["after"][1] == ms(2026, 11, 23, 19, 50, ET)
 
 
-# ── D-15 매수 상한 +10% ───────────────────────────────────────────────────
-@pytest.mark.parametrize("rise,expect", [(4.9, None), (5.0, "signal"), (9.9, "signal"), (10.0, "signal"), (10.5, "over_cap")])
-def test_entry_band_5_to_10(cfg, rise, expect):
-    assert cfg["entry"]["trigger_max_rise_pct"] == 10.0
+# ── D-15 · D-22 매수 상한 (+10% → +7%) ───────────────────────────────────────────────────
+@pytest.mark.parametrize("rise,expect", [(4.9, None), (5.0, "signal"), (6.9, "signal"), (7.0, "signal"), (7.5, "over_cap"), (10.5, "over_cap")])
+def test_entry_band_5_to_cap(cfg, rise, expect):
+    assert cfg["entry"]["trigger_max_rise_pct"] == 7.0      # D-22 (KNIME · 사용자 11-28): +10 → +7
     assert entry_signal(100.0, 100.0 * (1 + rise / 100), 1_000, 0, cfg) == expect
 
 
@@ -81,7 +81,7 @@ def test_engine_does_not_chase_above_cap(tmp_path, cfg):
 
 def test_engine_buys_inside_band(tmp_path, cfg):
     eng = make_engine(tmp_path, cfg)
-    eng.toss.default = 2.0 * 1.08
+    eng.toss.default = 2.0 * 1.06                             # +6% (상한 +7% 안 · D-22)
     asyncio.run(eng.handle_alert(alert()))
     assert eng.articles.rows()[-1]["action"] == "buy"
 
