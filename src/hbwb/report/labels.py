@@ -11,7 +11,7 @@ REASONS = {
     "claude_error": "Claude 호출 실패",
     "claude_pass": "Claude 패스",
     "no_trigger_5m": "5분 안에 +5% 없음",
-    "over_cap_5m": "+10% 위라서 추격 안 함",
+    "over_cap_5m": "상한 위라서 추격 안 함",
     "entry_not_filled": "매수 미체결",
     "filled": "매수 체결",
     "already_holding": "이미 보유 중",

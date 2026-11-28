@@ -54,7 +54,7 @@ def summarize(rows: list[dict]) -> str:
         key = ("Claude 판단 (" + (r["claude_decision"] or "?") + ")") if r["claude_called"] == "true" else (
             "Jev 에서 걸림" if r["jev_pass"] != "true" else "Jev 통과 · Claude 안 부름")
         g[key].append(r)
-    out = ["", "구분                       건수  가격자료  신호(+5%↑)  구간(+5~10%)  구간 중 이김  구간 평균수익"]
+    out = ["", "구분                       건수  가격자료  신호(+5%↑)  구간(상한 안)  구간 중 이김  구간 평균수익"]
     for k, rs in sorted(g.items()):
         has = [r for r in rs if r["bars"] not in ("", "0")]
         trig = [r for r in has if r["triggered"] == "yes"]
@@ -128,7 +128,7 @@ async def main(args) -> int:
     print(summarize(rows))
     band_claude = [r for r in rows if r["claude_called"] == "true" and r["in_band"] == "yes"]
     if band_claude:
-        print("\nClaude 가 판단했고 구간(+5~10%) 신호가 났던 기사:")
+        print("\nClaude 가 판단했고 구간(+5% ~ 상한) 신호가 났던 기사:")
         for r in band_claude:
             print(f"  {r['ticker']:6s} {r['received_utc'][5:16]} Claude {r['claude_decision']} (등급 {r['claude_grade']}) → "
                   f"샀다면 {float(r['sim_ret_pct']):+.2f}% {r['label_win']} · {r['claude_catalyst'][:50]}")

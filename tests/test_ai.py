@@ -104,7 +104,7 @@ def test_discord_retries_on_429():
 def test_claude_prompt_matches_real_rules(cfg):
     """D-18: 프롬프트가 실제 매수 · 매도 규칙(settings.yaml)을 설명한다 — 예전 '30분 · +10/+20% · −5%' 가 아니다."""
     sp = C.system_prompt(cfg)
-    assert "{RULES}" not in sp and "+5% to +10%" in sp and "stop-loss -7%" in sp
+    assert "{RULES}" not in sp and "+5% to +7%" in sp and "stop-loss -7%" in sp
     assert "+5%, +10%, +15%" in sp and "5% below the peak" in sp and "below +2% after 5 minutes" in sp
     assert "30 minutes" not in sp and "-5%)" not in sp
     assert "BUY 일 때만" in sp and "report_ko" not in C.system_prompt(cfg, with_report=False)

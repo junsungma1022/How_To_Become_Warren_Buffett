@@ -1,0 +1,10 @@
+# gitleaks 설정 — 기본 규칙을 모두 쓰고, 키가 아닌 것으로 확인된 줄만 좁게 뺀다 (D-22).
+[extend]
+useDefault = true
+
+[allowlist]
+description = "KNIME 노드 설정의 열 이름 (예: xAxisColumnV3 = sim_entry_rise_pct) — 비밀값 아님"
+regexTarget = "line"
+regexes = [
+  '''<entry key="[xy]AxisColumnV3" type="xstring" value="[A-Za-z0-9_]+"/>''',
+]
